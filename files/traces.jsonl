@@ -1,0 +1,6 @@
+{"ts": 1783574878.0591567, "brand": "Dovato", "market": "UK", "audience": "HCP", "classification": "unbranded", "iteration": 1, "all_passed": false, "failed_rules": ["rule_fail"]}
+{"ts": 1783574878.0634398, "brand": "Dovato", "market": "UK", "audience": "HCP", "classification": "unbranded", "iteration": 2, "all_passed": true, "failed_rules": []}
+{"ts": 1783574911.258411, "brand": "Dovato", "market": "UK", "audience": "HCP", "classification": "unbranded", "iteration": 1, "all_passed": false, "failed_rules": ["rule_fail"]}
+{"ts": 1783574911.2656932, "brand": "Dovato", "market": "UK", "audience": "HCP", "classification": "unbranded", "iteration": 2, "all_passed": true, "failed_rules": []}
+{"ts": 1783574997.8814585, "brand": "Dovato", "market": "UK", "audience": "HCP", "classification": "unbranded", "iteration": 1, "all_passed": false, "failed_rules": ["rule_fail"]}
+{"ts": 1783574997.8853989, "brand": "Dovato", "market": "UK", "audience": "HCP", "classification": "unbranded", "iteration": 2, "all_passed": true, "failed_rules": []}

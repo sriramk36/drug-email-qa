@@ -1,0 +1,95 @@
+"""
+Generator — Loop 1 (the "actor") in loop-engineering terms.
+
+Turns a CampaignBrief into a full HTML draft. In revision mode, it's
+handed the previous draft plus the specific FAILED grade items and
+asked to patch only what's needed — cheaper and more stable than
+regenerating from scratch every iteration.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from schema import CampaignBrief, GradeReport
+from brand_config import get_brand_tokens
+from regulatory import market_addendum
+from llm_client import LLMClient
+
+# Loaded once at import time and reused byte-for-byte on every call, for every
+# brand and market. Deliberately market-agnostic — see llm_client.py: this is
+# what lets it be cached as one stable prefix (Anthropic: explicit cache_control;
+# Azure AI Foundry/OpenAI: automatic, since it's already >1024 tokens) across the
+# entire app's lifetime, not just within a single brief's generate/revise loop.
+# Market-specific rules live in regulatory.py and get injected into the (uncached,
+# per-call) USER prompt instead — see _brief_prompt() below.
+SYSTEM_PROMPT = Path(__file__).parent.joinpath("prompts", "generator_system.md").read_text()
+
+
+def _extract_html(raw: str) -> str:
+    """Strip markdown code fences if the model wrapped its answer in one."""
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    return text.strip()
+
+
+def _brief_prompt(brief: CampaignBrief, tokens: dict) -> str:
+    return f"""
+Generate the HTML draft for this brief:
+
+- Channel: {brief.channel.value}{f" ({brief.email_type.value})" if brief.email_type else ""}
+- Market: {brief.market}
+- Audience: {brief.audience}
+- Brand: {brief.brand} ({tokens['company']})
+- Objective: {brief.objective}
+- Classification: {brief.classification.value}
+
+Market-specific compliance notes (these vary by market — apply only what's relevant here):
+{market_addendum(brief.market)}
+
+Brand tokens to use exactly as given (do not invent alternatives):
+- Primary color: {tokens['primary']}
+- Secondary color: {tokens['secondary']}
+- AE reporting line (use verbatim inside the bordered AE box): {tokens['ae_report_line']}
+- PI link placeholder text: {tokens['pi_link_placeholder']}
+
+Return ONLY the HTML file contents. No preamble, no explanation, no markdown fences.
+"""
+
+
+def generate(brief: CampaignBrief, client: LLMClient) -> str:
+    tokens = get_brand_tokens(brief.brand)
+    raw = client.complete(system=SYSTEM_PROMPT, user=_brief_prompt(brief, tokens), max_tokens=6000)
+    return _extract_html(raw)
+
+
+def revise(brief: CampaignBrief, previous_html: str, grade_report: GradeReport, client: LLMClient) -> str:
+    tokens = get_brand_tokens(brief.brand)
+    failed = grade_report.failed_items
+    failure_list = "\n".join(f"- [{i.rule_id}] {i.label}: {i.detail}" for i in failed)
+    user_prompt = f"""
+Here is the previous draft, which FAILED {len(failed)} check(s):
+
+FAILED CHECKS:
+{failure_list}
+
+PREVIOUS DRAFT HTML:
+{previous_html}
+
+Patch ONLY what's needed to fix the failed checks above. Keep everything
+else — including any passing checks and existing copy — unchanged.
+Brand tokens (unchanged from the original brief):
+- Primary color: {tokens['primary']}
+- Secondary color: {tokens['secondary']}
+- AE reporting line: {tokens['ae_report_line']}
+- PI link placeholder text: {tokens['pi_link_placeholder']}
+
+Return ONLY the corrected full HTML file. No preamble, no markdown fences.
+"""
+    raw = client.complete(system=SYSTEM_PROMPT, user=user_prompt, max_tokens=6000)
+    return _extract_html(raw)
