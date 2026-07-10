@@ -22,16 +22,20 @@ built yet; `run_pipeline()` in `pipeline.py` is a plain function, so
 wiring it behind a FastAPI endpoint or a queue consumer is a small
 follow-up, not a redesign.
 
-**Two orchestration versions, same underlying logic:** `pipeline.py`
-(plain Python, a bounded `while` loop) and `pipeline_langgraph.py`
-(LangGraph, same 4 nodes as a graph). Neither reimplements generation,
-grading, or resolution — both call the exact same functions in
-`generator.py`/`grader.py`/`regulatory.py`/`soft_review.py`. Pick
-whichever fits what you're presenting: the plain version is easier to
-narrate line-by-line in an interview; the LangGraph version gets you
-free incremental step tracing via `.stream()` and is the more
-defensible choice if a client specifically wants LangGraph on the
-architecture diagram.
+**Decision made: LangGraph (`pipeline_langgraph.py`) is the live version.**
+`app.py` runs on it directly — every request goes through
+`build_graph().stream(...)`, and the UI's step-by-step log is built
+from the graph's own node updates, not manual print statements. Both
+files still exist and both call the exact same underlying functions in
+`generator.py`/`grader.py`/`regulatory.py`/`soft_review.py`, so
+`pipeline.py` stays as a simpler reference implementation (and a
+useful "does the logic itself work, independent of any orchestration
+choice" sanity check) — but it isn't what the app or CLI demo runs on
+anymore. If you want it removed entirely, say so and I'll delete it;
+for now I'm keeping it since it costs nothing to leave in place and
+having a plain-Python version to point at is genuinely useful if
+someone ever asks "walk me through this without the LangGraph
+vocabulary."
 
 ## What this is *not*
 
@@ -155,13 +159,15 @@ export ANTHROPIC_API_KEY="..."
 ## Run it
 
 ```bash
-# CLI smoke test (mirrors your sample input: UK, HCP, Dovato, pre-launch awareness)
-python pipeline.py
-
-# Same thing, LangGraph orchestration instead — prints each node as it runs
+# CLI smoke test, LangGraph version (mirrors your sample input: UK, HCP, Dovato,
+# pre-launch awareness) — prints each node as it runs
 python pipeline_langgraph.py
 
-# Full UI
+# Same logic, plain-Python reference version
+python pipeline.py
+
+# Full UI — runs on pipeline_langgraph.py directly, soft review is an
+# unchecked-by-default checkbox in the form
 streamlit run app.py
 
 # After you've run a few briefs through it:
@@ -183,7 +189,7 @@ python analyze_traces.py
 | `pipeline.py` | Orchestrates resolve → generate → grade → revise → soft-review as a plain Python loop |
 | `pipeline_langgraph.py` | Same orchestration, as a LangGraph `StateGraph` |
 | `trace_logger.py` / `analyze_traces.py` | Append-only run log + failure-rate and resolution-cost analysis |
-| `app.py` | Streamlit UI matching your sample input format |
+| `app.py` | Streamlit UI — runs on `pipeline_langgraph.py` via `.stream()`, soft review is an off-by-default checkbox |
 
 ## Validated against your uploaded templates
 
