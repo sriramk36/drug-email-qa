@@ -296,65 +296,7 @@ generated differs.
 
 ---
 
-## 12. A real bug caught via live testing: the truncation death spiral
-
-Worth documenting because it's a good example of a failure mode that
-only shows up under real constraints, not in a mock-based test.
-
-**What happened:** running the live demo for real, every single call
-(the first generation and both revisions) came back with
-`stop_reason: max_tokens` — the model was hitting the artifact
-sandbox's hard 1000-output-token cap and getting cut off mid-response,
-every time. The original compact system prompt asked the model to
-write the body copy and decoration first and the compliance footer
-(DRAFT watermark, `[CL ID]`, AE box, regulatory tag) *last* — so when
-the cap hit, exactly the checks that matter most were the ones that
-never got written. Same 4 rules failed, identically, on all 3
-attempts.
-
-**Why the revision loop made it worse, not better:** the original
-revision prompt said "here's the previous draft, patch only what's
-needed, return the full corrected HTML." But the previous draft was
-already truncated — possibly mid-tag — and "patch it, return the
-full thing" forces the model to reproduce that same too-long structure
-plus the fix, which hits the identical wall again. Three calls, same
-failure, zero progress. That's also three calls' worth of tokens spent
-confirming something the first call's `stop_reason` had already told
-us.
-
-**The fix, two parts:**
-1. **Reorder by priority, not by natural writing order.** The system
-   prompt now has an explicit "Part A / Part B" structure: every
-   compliance-critical element (watermark, job code, regulatory tag,
-   AE box, audience line) must be written *first*, tersely, before any
-   headline or body copy. If a cutoff happens now, it can only ever
-   lose decorative content, never a graded element.
-2. **Stop patching truncated output — regenerate minimally instead.**
-   `buildRevisionPrompt()` now checks `wasTruncated` (was the previous
-   `stop_reason` `max_tokens`?). If so, it doesn't send the broken
-   previous draft back for "patching" — it tells the model plainly
-   that the previous attempt was cut off, shows a short snippet of
-   where, and asks for a fresh, deliberately shorter attempt instead.
-
-**A second, more general fix that came out of this:** a "stuck
-detector" in both the live demo and `pipeline.py`/`app.py`. If the
-exact same set of rules fails on two consecutive attempts, the loop
-stops instead of spending a 3rd call on a strategy that's already
-proven not to work twice. This isn't specific to the token-cap
-scenario — an unrecognized, un-fixable prompt issue could produce the
-same symptom even with an uncapped `max_tokens` in the real Python
-pipeline, and there's no reason to pay for a 3rd identical failure to
-find that out. Tested directly: a mock client that always returns the
-same broken output now stops the pipeline after 2 calls instead of 3.
-
-The lesson generalizes past this one bug: **`stop_reason` is a signal
-you should always check, not just `usage.output_tokens`.** A response
-that "succeeded" (200 status, valid JSON, no exception) can still be
-silently incomplete, and silently-incomplete output feeding into
-"patch this" instructions is exactly how you get a loop that looks
-like it's iterating but is actually just re-failing the same way.
-
-## 13. Why free text instead of dropdowns changes more than the UI
+## 12. Why free text instead of dropdowns changes more than the UI
 
 Converting market/audience/brand from `<select>`/enum to `<input
 type="text">`/`str` looks like a UI change but touches four files:

@@ -1,11 +1,9 @@
-openai==2.44.0
-python-dotenv==1.2.2
-Pillow==12.2.0
-streamlit==1.58.0
-fastapi==0.115.12
-uvicorn==0.34.0
-python-multipart==0.0.20
-pytest==8.3.5
-azure-identity>=1.15.0
-pydantic-settings>=2.0.0
-tenacity>=8.2.0
+pydantic>=2.0
+beautifulsoup4>=4.12
+streamlit>=1.35
+openai>=1.30      # used for the Azure AI Foundry path (OpenAI-wire-compatible)
+anthropic>=0.30   # only needed if you use the Anthropic fallback instead
+fastapi
+uvicorn
+pytest
+httpx

@@ -33,17 +33,12 @@ def run_pipeline(brief: CampaignBrief, client: LLMClient | None = None) -> Pipel
     iteration = 1
     prev_failed_ids = None
     while not report.all_passed and iteration < MAX_ITERATIONS:
-        # Stuck detector: if the exact same rules failed on the previous attempt too, another
-        # identical revision call is very unlikely to fix it — it means the prompt needs a real
-        # fix, not another retry. Stop here rather than burn a 3rd call repeating the same result
-        # (this is exactly what the live browser demo hit before this check was added: 3 calls,
-        # same 4 failures every time, because a truncated first draft made every "patch" attempt
-        # reproduce the same too-long structure and hit the same wall again).
         current_failed_ids = tuple(sorted(i.rule_id for i in report.failed_items))
-        if prev_failed_ids is not None and current_failed_ids == prev_failed_ids:
+        if iteration > 1 and current_failed_ids == prev_failed_ids:
+            # Same checks failed twice in a row. Stop instead of burning a 3rd identical call.
             break
         prev_failed_ids = current_failed_ids
-
+        
         iteration += 1
         html = revise(brief, html, report, client)
         report = grade(html, brief, tokens, iteration=iteration)

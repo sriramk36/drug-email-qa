@@ -96,6 +96,7 @@ if submitted:
            f"{usage.get('input_tokens','?')} in / {usage.get('output_tokens','?')} out tokens{cache_note})")
 
     iteration = 1
+    prev_failed_ids = None
     ui_log(f"→ [2/2] Grading {len(grade(html, brief, tokens, 1).items)} rules...")
     report = grade(html, brief, tokens, iteration=iteration)
     log_iteration(brief, report, iteration=iteration)
@@ -103,6 +104,13 @@ if submitted:
         ui_log(f"  {'✅' if item.passed else '❌'} {item.label} — {item.detail}")
 
     while not report.all_passed and iteration < 3:
+        current_failed_ids = tuple(sorted(i.rule_id for i in report.failed_items))
+        if iteration > 1 and current_failed_ids == prev_failed_ids:
+            ui_log(f"→ Same check(s) failed two attempts in a row — stopping instead of burning a "
+                   f"3rd identical call. Fix the prompt, don't just retry.")
+            break
+        prev_failed_ids = current_failed_ids
+
         iteration += 1
         failed = report.failed_items
         ui_log(f"→ {len(failed)} check(s) failed — revising (attempt {iteration}) with specific failures...")

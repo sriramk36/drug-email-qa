@@ -1,134 +1,161 @@
-# Drug Email QA Prototype
+# Pharma Marketing Draft Pipeline (prototype)
 
-A simple healthcare email QA prototype for drug awareness campaigns.
+A generate → grade → revise pipeline for pharma email/web marketing
+**drafts**. Built around two of the four loop patterns from
+[LangChain's "Art of Loop Engineering"](https://www.langchain.com/blog/the-art-of-loop-engineering):
 
-It generates an email draft, evaluates the output against campaign rules, and retries until the draft passes the review checks. The project includes both a CLI mode and two UI options:
-- lightweight browser UI (`ui/server.py` + `ui/index.html`)
-- Streamlit UI (`ui/app.py`)
+- **Loop 1 (agent/generator loop)** — `generator.py` turns a structured
+  brief into a full HTML draft.
+- **Loop 2 (verification loop)** — `grader.py` runs deterministic
+  structural checks against the draft; `pipeline.py` feeds failures
+  back into the generator for up to `MAX_ITERATIONS` revision passes.
+- **Loop 4 (hill-climbing loop), lightweight version** —
+  `trace_logger.py` + `analyze_traces.py` log every attempt so you can
+  see which rules the generator trips on most often across many runs,
+  and sharpen `prompts/generator_system.md` against real failure data.
 
-## What this project includes
-- `app.py`: CLI entry point for campaign verification
-- `graph.py`: verification loop orchestration, feedback retry, and structured logs
-- `agents/generator.py`: model selection + prompt builder + fallback behavior
-- `agents/reviewers.py`: reviewer logic for medical, brand, email, compliance, and image checks
-- `agents/image_analyzer.py`: image metadata analysis for uploaded assets
-- `knowledge/`: campaign documentation, brand guidance, compliance rules, and image metadata
-- `ui/index.html`: browser interface for local HTML UI
-- `ui/server.py`: HTTP server for the browser UI
-- `ui/app.py`: Streamlit frontend alternative
-- `tests/test_verification_loop.py`: basic regression test for the review loop
-- `.gitignore`: files to keep out of version control
+Loop 3 (event-driven trigger — webhook/cron kicking off a run) isn't
+built yet; `run_pipeline()` in `pipeline.py` is a plain function, so
+wiring it behind a FastAPI endpoint or a queue consumer is a small
+follow-up, not a redesign.
 
-## Rule coverage and reviewer checks
-The review logic in `agents/reviewers.py` uses an LLM-as-a-judge pattern to enforce:
+## What this is *not*
 
-### Medical accuracy
-- disallows unsupported claims such as `cure`, `guarantee`, `prevent`, `eliminate`, `miracle`, `instant`
-- requires the drug name to appear in the email text
+This does not replace ABPI/FDA MLR review. `PipelineResult.approved_for_production`
+is hard-coded `False` on every run — passing all checks means the
+draft is *structurally* complete (AE box present, HCP tag present, no
+brand-name leak in unbranded copy, etc.), not that a qualified human
+reviewer has signed off on the clinical claims, fair balance, or final
+wording. Treat every checkmark as "ready for a human to review," never
+"ready to send."
 
-### Brand and CTA guidelines
-- flags overly promotional CTA wording such as `buy now` or `act now`
-- requires educational/friendly CTA wording like `learn more` or `speak with`
+## Why the grader is rule-based, not another LLM call
 
-### Email structure
-- requires a `Subject:` line
-- requires a `Body:` or `Message:` section
-- requires a `CTA:` or `Call to Action:` section
-- checks for professional guidance language such as `professional` / `healthcare professional`
-- checks that the email is not excessively long
+An LLM grading its sibling's output can rationalize a near-miss as a
+pass. Regex/DOM checks either find the bordered AE box or they don't —
+the audit trail in `GradeReport` tells a human reviewer exactly which
+rule fired and why, which is what actually makes this useful as a
+demo of a *compliance-aware* pipeline rather than just a content
+generator with an extra LLM call bolted on.
 
-### Compliance
-- checks text against compliance guidance loaded from `knowledge/compliance_rules.md`
-- if the compliance text mentions safety, it requires the email to mention safety
-- if the compliance text mentions disclaimers, it requires the email to mention disclaimer language
+## Market-specific rules, not a hardcoded one-size-fits-all set
 
-### Image review
-- if an image is uploaded, it checks whether the detected caption supports the awareness message
-- if no image is uploaded, the flow continues without an image failure
+Early versions of this only varied *which acronym* (ABPI vs FDA/OPDP)
+appeared in the footer per market — everything else was identical
+regardless of market, which understates real differences (EU/UK
+additional-monitoring black-triangle requirements, US Boxed Warning
+placement rules, DTC advertising restrictions that don't exist in the
+same form in the US). `regulatory.py::MARKET_MAP` now carries
+market-specific notes alongside the regulatory tag, injected into the
+generator's user prompt via `market_addendum()`, and `grader.py` has
+two dedicated market-specific rules (`black_triangle` for UK/EU,
+`boxed_warning` for US) on top of the 9 structural ones. Both are
+non-blocking "confirm with regulatory" reminders, not pass/fail
+verdicts — the tool has no way to know a specific product's actual
+monitoring or Boxed Warning status, so it flags the question rather
+than guessing the answer. Extending to more markets is adding an
+entry to `MARKET_MAP`, not touching the grader's control flow.
+
+## Token cost strategy
+
+Three things keep this from burning tokens needlessly, in rough order
+of impact:
+
+1. **Fewer wasted iterations.** Market-specific guidance (black
+   triangle, Boxed Warning) is now in the *first* generation call's
+   prompt, not only surfaced after a failed check — a correct first
+   draft costs one call end-to-end; a wrong one costs two full calls
+   (generate + revise) for the same result.
+2. **Prompt caching on the one big stable block.** `generator.py`'s
+   `SYSTEM_PROMPT` is loaded once and reused byte-for-byte forever —
+   it's deliberately market-agnostic (market content lives in the
+   per-call user prompt instead) specifically so it stays one constant
+   ~1000-token prefix. `llm_client.py` tags it with Anthropic's
+   `cache_control: {"type": "ephemeral"}`, giving a ~90% discount on
+   every call after the first. On Azure AI Foundry/OpenAI-compatible
+   endpoints, caching on a >=1024-token repeated prefix is automatic —
+   no code needed, which is also why the system prompt wasn't
+   aggressively shrunk when asked to optimize; dropping it under
+   ~1024 tokens would forfeit that automatic discount.
+3. **Bounded loop + early exit.** `MAX_ITERATIONS = 3`, and the loop
+   already stops as soon as only non-blocking warnings remain instead
+   of spending a 3rd call chasing a check that was never going to
+   block.
+
+`LLMClient.last_usage` exposes real token/cache counts after every
+call (`input_tokens`, `output_tokens`, and on Anthropic,
+`cache_read_input_tokens` / `cache_creation_input_tokens`) — both
+`app.py` and `pipeline.py`'s CLI smoke test print these so you can see
+the discount happening, not just take it on faith.
 
 ## Setup
-1. Activate your virtual environment.
 
-PowerShell:
-```powershell
-.\.venv\Scripts\Activate.ps1
+```bash
+pip install -r requirements.txt
+
+# Azure AI Foundry (matches your existing GPT-4o-mini deployment):
+export AZURE_AI_FOUNDRY_ENDPOINT="https://<resource>.services.ai.azure.com/models"
+export AZURE_AI_FOUNDRY_API_KEY="..."
+export AZURE_AI_FOUNDRY_DEPLOYMENT="gpt-4o-mini"
+
+# — or — Anthropic instead:
+export ANTHROPIC_API_KEY="..."
 ```
 
-Command Prompt:
-```cmd
-.\.venv\Scripts\activate.bat
+## Run it
+
+```bash
+# CLI smoke test (mirrors your sample input: UK, HCP, Dovato, pre-launch awareness)
+python pipeline.py
+
+# Full UI
+streamlit run app.py
+
+# API Server
+uvicorn api:app --reload
+
+# Docker Deployment
+docker build -t mlr-pipeline .
+docker run -p 8000:8000 mlr-pipeline
+
+# After you've run a few briefs through it:
+python analyze_traces.py
 ```
 
-2. Install dependencies:
-```powershell
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
+## File map
 
-## Configuration
-Create a local `.env` file in the project root with Azure or OpenAI credentials.
+| File | Role |
+|---|---|
+| `schema.py` | `CampaignBrief`, `GradeItem`, `GradeReport`, `PipelineResult` — the data contracts |
+| `brand_config.py` | Per-brand color tokens + AE reporting line + PI placeholder (placeholders, not real brand-guideline values) |
+| `regulatory.py` | Free-text market/audience resolution + per-market compliance notes (word-boundary matched, not naive substring) |
+| `prompts/generator_system.md` | The Generator's system prompt — market-agnostic on purpose, see Token cost strategy below |
+| `llm_client.py` | Provider-agnostic LLM wrapper (Azure AI Foundry / Anthropic) |
+| `generator.py` | Brief → HTML, plus revision mode |
+| `grader.py` | 9 deterministic structural rules, `BeautifulSoup`-based |
+| `pipeline.py` | Orchestrates generate → grade → revise, up to 3 iterations |
+| `trace_logger.py` / `analyze_traces.py` | Append-only run log + failure-rate analysis |
+| `app.py` | Streamlit UI matching your sample input format |
 
-### Azure OpenAI example
-```ini
-AZURE_OPENAI_API_KEY=your_key_here
-AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com
-AZURE_OPENAI_API_VERSION=2024-02-15-preview
-AZURE_OPENAI_DEPLOYMENT=<your-deployment-name>
-```
+## Validated against your uploaded templates
 
-### Azure AI Services example
-```ini
-AZURE_OPENAI_ENDPOINT=https://<your-resource>.services.ai.azure.com/openai/v1
-AZURE_OPENAI_DEPLOYMENT=<your-deployment-name>
-```
+I ran `grader.py` against `DOVATO-UK-EMAIL-2026-004` as a sanity check
+before handing this over: 8 of 9 rules passed cleanly, including
+correctly detecting that the file is unbranded (product name only
+appears in the internal annotation footer, never the visible body) and
+correctly finding the ABPI reference and HCP-only line. The one
+"failure" was the AE line not matching my placeholder wording verbatim
+— expected, since that file predates this token system; it's not a
+grader bug.
 
-> For Azure AI Services, the code can use `AZURE_OPENAI_API_KEY` if present, or `DefaultAzureCredential` from `azure-identity` when running in an authenticated Azure environment.
+## Known gaps / next steps
 
-> For classic Azure OpenAI, do not include `/openai/v1` in `AZURE_OPENAI_ENDPOINT`. Use the base resource URL only.
-
-### OpenAI example
-```ini
-OPENAI_API_KEY=your_key_here
-```
-
-## Running the project
-
-### CLI mode
-```powershell
-python app.py
-```
-
-### Browser UI (FastAPI)
-```powershell
-python ui/server.py
-```
-open your browser at `http://127.0.0.1:8000`
-
-The browser UI uses FastAPI and exposes:
-- `GET /` — main UI
-- `GET /health` — readiness check
-- `POST /run` — same verification loop as `app.py`
-- `POST /export/html` and `POST /export/text` — download generated emails
-
-### Streamlit UI
-```powershell
-streamlit run ui/app.py
-```
-
-## Project flow
-1. `app.py` or the UI builds the campaign payload.
-2. `graph.py` calls `run_verification_loop()`.
-3. `agents/generator.py` selects either Azure OpenAI or OpenAI and sends the prompt.
-4. `agents/reviewers.py` applies review checks to the email.
-5. If the draft fails, the loop retries using review issues as feedback.
-6. The final result includes the email, review summary, and structured logs.
-
-## Troubleshooting
-- `404 Resource not found`: usually wrong Azure endpoint or deployment name in `.env`
-- `OpenAI` / `AzureOpenAI` import failure: missing dependencies or bad virtual environment
-- If you use `ui/app.py`, install `streamlit` and run `streamlit run ui/app.py`
-- Configuration errors will surface immediately at startup via `pydantic-settings` validation.
-
-## Notes
-- The project includes two UI options; `ui/server.py` is the lightweight browser server, and `ui/app.py` is the Streamlit frontend.
-- `.gitignore` already excludes `.venv`, `.env`, `__pycache__`, `uploads/`, and VS Code settings.
+- **`rule_ae_box`** matches the AE line against the brand token
+  verbatim. That's correct for content this pipeline generated itself,
+  but too strict if you ever grade externally-sourced HTML — consider
+  a looser "known reporting mechanism per market" check for that case.
+- **No image/logo asset pipeline** — logos stay labeled placeholders
+  by design (see `prompts/generator_system.md`, rule 7); wiring in
+  real approved assets is a deliberate separate step, not something to
+  automate away.
+- **Loop 3** (event trigger) — API layer added via FastAPI in `api.py`, which exposes `run_pipeline()` over HTTP.
