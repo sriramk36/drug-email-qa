@@ -8,17 +8,33 @@ can check exactly and reproducibly. Saving the LLM for judgment calls
 keeps the audit trail auditable — a human reviewer can see precisely
 why something failed, not just an LLM's opinion that it failed.
 
+IMPORTANT: market/audience resolution (regulatory.py) can now involve
+an LLM call for genuinely unrecognized free-text input. That call
+happens exactly ONCE per pipeline run, upstream, in pipeline.py — not
+here. Rules receive the already-resolved MarketInfo/AudienceInfo as
+plain data via GradingContext. This keeps the grader's core guarantee
+intact: grading itself never makes a network call, regardless of how
+the inputs it's checking against were resolved.
+
 Every rule function has the same signature:
-    (soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, tokens: dict) -> GradeItem
+    (soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from bs4 import BeautifulSoup
 
 from schema import CampaignBrief, GradeItem, GradeReport, ContentClassification
-from regulatory import resolve_market
+from regulatory import MarketInfo, AudienceInfo
+
+
+@dataclass
+class GradingContext:
+    tokens: dict
+    market_info: MarketInfo
+    audience_info: AudienceInfo
 
 
 def _visible_body_text(soup: BeautifulSoup) -> str:
@@ -28,13 +44,12 @@ def _visible_body_text(soup: BeautifulSoup) -> str:
     the brand name internally for the production team.
     """
     body = soup.select_one(".email-content") or soup.select_one(".email-outer") or soup
-    # strip the annotation block if it's nested inside for any reason
     for ann in body.select(".annotation-wrap"):
         ann.decompose()
     return body.get_text(" ", strip=True)
 
 
-def rule_draft_watermark(soup, raw_html, brief, tokens) -> GradeItem:
+def rule_draft_watermark(soup, raw_html, brief, ctx) -> GradeItem:
     ok = "DRAFT" in raw_html and "Not approved for distribution" in raw_html
     return GradeItem(
         rule_id="watermark",
@@ -45,7 +60,7 @@ def rule_draft_watermark(soup, raw_html, brief, tokens) -> GradeItem:
     )
 
 
-def rule_job_code_pending(soup, raw_html, brief, tokens) -> GradeItem:
+def rule_job_code_pending(soup, raw_html, brief, ctx) -> GradeItem:
     ok = "[CL ID" in raw_html or "CL ID — PENDING" in raw_html
     return GradeItem(
         rule_id="job_code",
@@ -55,21 +70,22 @@ def rule_job_code_pending(soup, raw_html, brief, tokens) -> GradeItem:
     )
 
 
-def rule_hcp_audience_tag(soup, raw_html, brief, tokens) -> GradeItem:
-    if not brief.is_hcp():
+def rule_hcp_audience_tag(soup, raw_html, brief, ctx) -> GradeItem:
+    if not ctx.audience_info.is_hcp:
+        note = "" if ctx.audience_info.known else " (resolver was uncertain — treated as not-HCP by default)"
         return GradeItem(rule_id="audience_tag", label="HCP-only audience statement",
-                          passed=True, detail=f"Not required — audience '{brief.audience}' wasn't recognized as HCP.",
+                          passed=True, detail=f"Not required — audience '{brief.audience}' wasn't recognized as HCP{note}.",
                           severity="warning")
     text = _visible_body_text(soup).lower()
-    market_info = resolve_market(brief.market)
+    market_info = ctx.market_info
     # If the market itself wasn't recognized we can't require a market word to appear at
     # all — just require the HCP-only statement itself, and flag the market as unverified.
     # If it *was* recognized, accept any known synonym ("UK" satisfies "United Kingdom").
     ok = "healthcare professional" in text
-    if market_info["known"]:
+    if market_info.known:
         # Word-boundary match, not naive substring — a bare "us" alias would
         # otherwise false-positive inside words like "focuses"/"discusses".
-        ok = ok and any(re.search(rf"\b{re.escape(alias)}\b", text) for alias in market_info["aliases"])
+        ok = ok and any(re.search(rf"\b{re.escape(alias)}\b", text) for alias in market_info.aliases)
     return GradeItem(
         rule_id="audience_tag",
         label="HCP-only audience statement",
@@ -79,11 +95,10 @@ def rule_hcp_audience_tag(soup, raw_html, brief, tokens) -> GradeItem:
     )
 
 
-def rule_ae_box(soup, raw_html, brief, tokens) -> GradeItem:
-    # Look for any element whose inline/CSS-declared border looks like a real visible border
+def rule_ae_box(soup, raw_html, brief, ctx) -> GradeItem:
     candidates = soup.find_all(style=re.compile(r"border\s*:\s*\d"))
     has_border_el = len(candidates) > 0 or "border: 2px" in raw_html or "2px solid" in raw_html
-    ae_line = tokens.get("ae_report_line", "")
+    ae_line = ctx.tokens.get("ae_report_line", "")
     has_ae_text = "adverse event" in raw_html.lower()
     line_matches = ae_line[:20].lower() in raw_html.lower() if ae_line else False
     ok = has_border_el and has_ae_text and line_matches
@@ -102,7 +117,7 @@ def rule_ae_box(soup, raw_html, brief, tokens) -> GradeItem:
     )
 
 
-def rule_brand_leak(soup, raw_html, brief, tokens) -> GradeItem:
+def rule_brand_leak(soup, raw_html, brief, ctx) -> GradeItem:
     if brief.classification != ContentClassification.UNBRANDED_DISEASE_AWARENESS:
         return GradeItem(rule_id="brand_leak", label="No product name in unbranded body copy",
                           passed=True, detail="Not applicable — content is branded.", severity="warning")
@@ -119,7 +134,7 @@ def rule_brand_leak(soup, raw_html, brief, tokens) -> GradeItem:
     )
 
 
-def rule_pi_link_if_branded(soup, raw_html, brief, tokens) -> GradeItem:
+def rule_pi_link_if_branded(soup, raw_html, brief, ctx) -> GradeItem:
     if brief.classification != ContentClassification.BRANDED:
         return GradeItem(rule_id="pi_link", label="Prescribing Information link placeholder present",
                           passed=True, detail="Not applicable — content is unbranded.", severity="warning")
@@ -132,31 +147,31 @@ def rule_pi_link_if_branded(soup, raw_html, brief, tokens) -> GradeItem:
     )
 
 
-def rule_regulatory_footer_tag(soup, raw_html, brief, tokens) -> GradeItem:
-    market_info = resolve_market(brief.market)
-    if not market_info["known"]:
-        # Honest uncertainty, not a silent pass: we don't know this market's code,
-        # so this can't be a blocking check — flag it for a human instead.
+def rule_regulatory_footer_tag(soup, raw_html, brief, ctx) -> GradeItem:
+    market_info = ctx.market_info
+    if not market_info.known:
+        source_note = f" (resolver source: {market_info.source})"
         return GradeItem(
             rule_id="reg_footer",
             label="Regulatory code referenced in footer",
             passed=False,
-            detail=f"Market '{brief.market}' isn't in the resolver's known list (UK/US/EU/Swiss) — "
-                   f"confirm the applicable code manually and extend regulatory.py's MARKET_MAP.",
+            detail=f"Market '{brief.market}' couldn't be confidently resolved{source_note} — "
+                   f"confirm the applicable code manually.",
             severity="warning",
         )
-    expected = market_info["tags"]
+    expected = market_info.tags
     ok = any(tag in raw_html for tag in expected)
+    source_note = "" if market_info.source == "dictionary" else f" [resolved via {market_info.source} — double-check this]"
     return GradeItem(
         rule_id="reg_footer",
         label="Regulatory code referenced in footer",
         passed=ok,
-        detail=f"Found {brief.regulatory_body()} reference." if ok
-        else f"Footer does not reference the applicable code ({'/'.join(expected)}).",
+        detail=(f"Found {market_info.body_name} reference.{source_note}" if ok
+                else f"Footer does not reference the applicable code ({'/'.join(expected)}).{source_note}"),
     )
 
 
-def rule_no_hardcoded_cta_url(soup, raw_html, brief, tokens) -> GradeItem:
+def rule_no_hardcoded_cta_url(soup, raw_html, brief, ctx) -> GradeItem:
     real_links = [a.get("href", "") for a in soup.find_all("a")]
     bad = [h for h in real_links if h and h not in ("#",) and not h.startswith("#")
            and "TBC" not in h and "pending" not in h.lower()]
@@ -170,7 +185,7 @@ def rule_no_hardcoded_cta_url(soup, raw_html, brief, tokens) -> GradeItem:
     )
 
 
-def rule_logo_not_embedded(soup, raw_html, brief, tokens) -> GradeItem:
+def rule_logo_not_embedded(soup, raw_html, brief, ctx) -> GradeItem:
     imgs = soup.find_all("img")
     real_logo_imgs = [i for i in imgs if i.get("src") and not i.get("src", "").startswith(("placeholder", "#"))
                        and "logo" in " ".join(i.get("class", [])).lower()]
@@ -185,17 +200,17 @@ def rule_logo_not_embedded(soup, raw_html, brief, tokens) -> GradeItem:
 
 
 # --- Market-specific rules -------------------------------------------------
-# These are the actual answer to "EU rules are different from US rules, right?"
-# They're separate from the tag-swap in rule_regulatory_footer_tag because the
-# *content* differs by market, not just which acronym appears. Both are
-# deliberately "warning" severity, never blocking: the tool has no way to know
-# a product's real additional-monitoring or Boxed Warning status, so it can
-# only remind a human to confirm — asserting either as a pass/fail would be
-# claiming certainty the tool doesn't have.
+# The actual answer to "EU rules are different from US rules, right?" — separate
+# from the tag-swap in rule_regulatory_footer_tag because the *content* differs
+# by market, not just which acronym appears. Both are deliberately "warning"
+# severity, never blocking: the tool has no way to know a product's real
+# additional-monitoring or Boxed Warning status, so it can only remind a human
+# to confirm — asserting either as a pass/fail would be claiming certainty the
+# tool doesn't have.
 
-def rule_black_triangle_uk_eu(soup, raw_html, brief, tokens) -> GradeItem:
-    market_info = resolve_market(brief.market)
-    if not market_info["known"] or not any(t in market_info["tags"] for t in ("ABPI", "EFPIA")):
+def rule_black_triangle_uk_eu(soup, raw_html, brief, ctx) -> GradeItem:
+    market_info = ctx.market_info
+    if not market_info.known or not any(t in market_info.tags for t in ("ABPI", "EFPIA")):
         return GradeItem(rule_id="black_triangle", label="Black triangle / additional-monitoring reminder (UK/EU)",
                           passed=True, detail="Not applicable — market isn't UK/EU.", severity="warning")
     mentioned = "▼" in raw_html or "additional monitoring" in raw_html.lower()
@@ -210,9 +225,9 @@ def rule_black_triangle_uk_eu(soup, raw_html, brief, tokens) -> GradeItem:
     )
 
 
-def rule_boxed_warning_us(soup, raw_html, brief, tokens) -> GradeItem:
-    market_info = resolve_market(brief.market)
-    if not market_info["known"] or "FDA" not in market_info["tags"]:
+def rule_boxed_warning_us(soup, raw_html, brief, ctx) -> GradeItem:
+    market_info = ctx.market_info
+    if not market_info.known or "FDA" not in market_info.tags:
         return GradeItem(rule_id="boxed_warning", label="Boxed Warning reminder (US)",
                           passed=True, detail="Not applicable — market isn't US.", severity="warning")
     mentioned = "boxed warning" in raw_html.lower()
@@ -242,7 +257,7 @@ ALL_RULES = [
 ]
 
 
-def grade(html: str, brief: CampaignBrief, tokens: dict, iteration: int) -> GradeReport:
+def grade(html: str, brief: CampaignBrief, ctx: GradingContext, iteration: int) -> GradeReport:
     soup = BeautifulSoup(html, "html.parser")
-    items = [rule(soup, html, brief, tokens) for rule in ALL_RULES]
+    items = [rule(soup, html, brief, ctx) for rule in ALL_RULES]
     return GradeReport(items=items, iteration=iteration)

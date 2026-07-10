@@ -12,9 +12,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from schema import CampaignBrief, GradeReport
-from brand_config import get_brand_tokens
 from regulatory import market_addendum
 from llm_client import LLMClient
+from grader import GradingContext
 
 # Loaded once at import time and reused byte-for-byte on every call, for every
 # brand and market. Deliberately market-agnostic — see llm_client.py: this is
@@ -38,7 +38,8 @@ def _extract_html(raw: str) -> str:
     return text.strip()
 
 
-def _brief_prompt(brief: CampaignBrief, tokens: dict) -> str:
+def _brief_prompt(brief: CampaignBrief, ctx: GradingContext) -> str:
+    tokens = ctx.tokens
     return f"""
 Generate the HTML draft for this brief:
 
@@ -50,7 +51,7 @@ Generate the HTML draft for this brief:
 - Classification: {brief.classification.value}
 
 Market-specific compliance notes (these vary by market — apply only what's relevant here):
-{market_addendum(brief.market)}
+{market_addendum(ctx.market_info)}
 
 Brand tokens to use exactly as given (do not invent alternatives):
 - Primary color: {tokens['primary']}
@@ -62,14 +63,13 @@ Return ONLY the HTML file contents. No preamble, no explanation, no markdown fen
 """
 
 
-def generate(brief: CampaignBrief, client: LLMClient) -> str:
-    tokens = get_brand_tokens(brief.brand)
-    raw = client.complete(system=SYSTEM_PROMPT, user=_brief_prompt(brief, tokens), max_tokens=6000)
+def generate(brief: CampaignBrief, client: LLMClient, ctx: GradingContext) -> str:
+    raw = client.complete(system=SYSTEM_PROMPT, user=_brief_prompt(brief, ctx), max_tokens=6000)
     return _extract_html(raw)
 
 
-def revise(brief: CampaignBrief, previous_html: str, grade_report: GradeReport, client: LLMClient) -> str:
-    tokens = get_brand_tokens(brief.brand)
+def revise(brief: CampaignBrief, previous_html: str, grade_report: GradeReport, client: LLMClient, ctx: GradingContext) -> str:
+    tokens = ctx.tokens
     failed = grade_report.failed_items
     failure_list = "\n".join(f"- [{i.rule_id}] {i.label}: {i.detail}" for i in failed)
     user_prompt = f"""

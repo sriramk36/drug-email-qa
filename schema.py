@@ -54,9 +54,13 @@ class CampaignBrief(BaseModel):
     classification: ContentClassification = ContentClassification.UNBRANDED_DISEASE_AWARENESS
 
     def regulatory_body(self) -> str:
-        return resolve_market(self.market)["body_name"]
+        """Convenience only — dictionary/cache lookup, no LLM fallback (no client
+        available here). The pipeline itself resolves market once with LLM fallback
+        and threads that through; this method is for quick ad-hoc/test use."""
+        return resolve_market(self.market).body_name
 
     def is_hcp(self) -> bool:
+        """Convenience only — same caveat as regulatory_body() above."""
         return is_hcp_audience(self.audience)
 
 
@@ -81,9 +85,19 @@ class GradeReport(BaseModel):
         return [i for i in self.items if not i.passed]
 
 
+class SoftReviewNote(BaseModel):
+    """Defined here (not just in soft_review.py) so schema.py stays the single
+    place PipelineResult's shape is declared. Deliberately NOT part of
+    GradeReport — see soft_review.py for why keeping it separate matters."""
+    concern: str
+    detail: str
+    severity: str = "advisory"
+
+
 class PipelineResult(BaseModel):
     brief: CampaignBrief
     final_html: str
     grade_report: GradeReport
     iterations_used: int
+    soft_review_notes: list[SoftReviewNote] = []  # advisory only, see soft_review.py
     approved_for_production: bool = False  # ALWAYS false — see pipeline.py note

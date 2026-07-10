@@ -21,7 +21,11 @@ def main():
         print("No traces.jsonl yet — run pipeline.py a few times first.")
         return
 
-    records = [json.loads(line) for line in TRACE_FILE.read_text().splitlines() if line.strip()]
+    all_records = [json.loads(line) for line in TRACE_FILE.read_text().splitlines() if line.strip()]
+    # Old trace files predate the "type" field — everything in them was an iteration record.
+    records = [r for r in all_records if r.get("type", "iteration") == "iteration"]
+    resolutions = [r for r in all_records if r.get("type") == "resolution"]
+
     first_attempts = [r for r in records if r["iteration"] == 1]
 
     rule_fail_counts = Counter()
@@ -40,6 +44,23 @@ def main():
         sum(1 for r in records if r["all_passed"]), 1
     )
     print(f"\nAvg iterations to pass (when it passes): {avg_iters:.1f}")
+
+    if resolutions:
+        print(f"\nMarket/audience resolution cost breakdown ({len(resolutions)} runs):")
+        market_sources = Counter(r["market_source"] for r in resolutions)
+        audience_sources = Counter(r["audience_source"] for r in resolutions)
+        for label, counts in [("market", market_sources), ("audience", audience_sources)]:
+            print(f"  {label}:")
+            for source, count in counts.most_common():
+                cost_note = "free" if source in ("dictionary", "keyword", "cache") else "paid LLM call"
+                print(f"    {source:12s} {count:3d}x  ({cost_note})")
+        llm_calls = sum(1 for r in resolutions if r["market_source"] == "llm") + \
+                    sum(1 for r in resolutions if r["audience_source"] == "llm")
+        print(f"  -> {llm_calls} resolution LLM call(s) across {len(resolutions)} runs. If this "
+              f"number is high and the same unrecognized markets/audiences keep recurring, add "
+              f"them to MARKET_MAP/HCP_KEYWORDS directly — the cache already saves repeats of the "
+              f"exact same string, but a slightly different phrasing of the same market still "
+              f"pays for a fresh LLM call once.")
 
 
 if __name__ == "__main__":

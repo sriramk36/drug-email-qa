@@ -1,14 +1,17 @@
 # Pharma Marketing Draft Pipeline (prototype)
 
 A generate → grade → revise pipeline for pharma email/web marketing
-**drafts**. Built around two of the four loop patterns from
+**drafts**. Built around three of the four loop patterns from
 [LangChain's "Art of Loop Engineering"](https://www.langchain.com/blog/the-art-of-loop-engineering):
 
 - **Loop 1 (agent/generator loop)** — `generator.py` turns a structured
   brief into a full HTML draft.
-- **Loop 2 (verification loop)** — `grader.py` runs deterministic
+- **Loop 2 (verification loop)** — `grader.py` runs 11 deterministic
   structural checks against the draft; `pipeline.py` feeds failures
   back into the generator for up to `MAX_ITERATIONS` revision passes.
+  A separate, genuinely agentic layer (`soft_review.py`) handles the
+  subjective concerns a deterministic rule structurally cannot — see
+  "Deterministic grading vs. the soft-review layer" below.
 - **Loop 4 (hill-climbing loop), lightweight version** —
   `trace_logger.py` + `analyze_traces.py` log every attempt so you can
   see which rules the generator trips on most often across many runs,
@@ -18,6 +21,17 @@ Loop 3 (event-driven trigger — webhook/cron kicking off a run) isn't
 built yet; `run_pipeline()` in `pipeline.py` is a plain function, so
 wiring it behind a FastAPI endpoint or a queue consumer is a small
 follow-up, not a redesign.
+
+**Two orchestration versions, same underlying logic:** `pipeline.py`
+(plain Python, a bounded `while` loop) and `pipeline_langgraph.py`
+(LangGraph, same 4 nodes as a graph). Neither reimplements generation,
+grading, or resolution — both call the exact same functions in
+`generator.py`/`grader.py`/`regulatory.py`/`soft_review.py`. Pick
+whichever fits what you're presenting: the plain version is easier to
+narrate line-by-line in an interview; the LangGraph version gets you
+free incremental step tracing via `.stream()` and is the more
+defensible choice if a client specifically wants LangGraph on the
+architecture diagram.
 
 ## What this is *not*
 
@@ -29,14 +43,46 @@ reviewer has signed off on the clinical claims, fair balance, or final
 wording. Treat every checkmark as "ready for a human to review," never
 "ready to send."
 
-## Why the grader is rule-based, not another LLM call
+## Deterministic grading vs. the soft-review layer
 
-An LLM grading its sibling's output can rationalize a near-miss as a
-pass. Regex/DOM checks either find the bordered AE box or they don't —
-the audit trail in `GradeReport` tells a human reviewer exactly which
-rule fired and why, which is what actually makes this useful as a
-demo of a *compliance-aware* pipeline rather than just a content
-generator with an extra LLM call bolted on.
+All 11 rules in `grader.py` check objective, checkable facts — a
+border exists, a string is present, a name is absent. None of them are
+judgment calls, so none of them cost an LLM call; an LLM re-checking
+"does this border exist" would be strictly worse (slower, costs
+tokens, and can rationalize a near-miss as a pass).
+
+But a real MLR review also asks things no regex can answer: does this
+copy *imply* an efficacy claim without stating one outright? Is "fair
+balance" actually balanced, or just technically present? That's what
+`soft_review.py` is for — ONE LLM call, run only after all blocking
+grader rules already pass, returning advisory notes that are never
+merged into `GradeReport` and never treated as pass/fail. It's the
+genuinely agentic half of loop 2; the 11 structural rules are the
+deterministic half. Toggle it off (`run_soft_review=False`) if you
+don't want the extra call — the pipeline works completely fine
+without it.
+
+## Resolving free-text market/audience: dictionary → cache → LLM
+
+`regulatory.py` resolves market/audience input in three tiers, cheapest
+first:
+
+1. **Dictionary** (free, instant) — covers UK/US/EU/Swiss and common
+   synonyms via word-boundary matching.
+2. **Disk cache** (`resolution_cache.json`, free after the first time)
+   — any market/audience string an LLM has already resolved once.
+3. **LLM fallback** (one call, then cached forever) — only for input
+   the dictionary genuinely doesn't recognize, e.g. "Ireland" or
+   "formulary committee."
+
+This only fires when a `client` is passed to `resolve_market()`/
+`resolve_audience()` — pass `client=None` (the default in ad-hoc use)
+and you get the same honest "unresolved" fallback as before, no LLM
+call, no surprise cost. `pipeline.py` and `pipeline_langgraph.py` both
+resolve exactly once per run, upstream of generation and grading — the
+grader itself never triggers any of this, it just receives the
+already-resolved `MarketInfo`/`AudienceInfo` as plain data via
+`GradingContext`.
 
 ## Market-specific rules, not a hardcoded one-size-fits-all set
 
@@ -58,15 +104,20 @@ entry to `MARKET_MAP`, not touching the grader's control flow.
 
 ## Token cost strategy
 
-Three things keep this from burning tokens needlessly, in rough order
+Four things keep this from burning tokens needlessly, in rough order
 of impact:
 
-1. **Fewer wasted iterations.** Market-specific guidance (black
-   triangle, Boxed Warning) is now in the *first* generation call's
+1. **The dictionary/cache-first resolver above** — most real traffic
+   (UK/US/EU/Swiss, obvious HCP/patient keywords) never reaches an LLM
+   call at all.
+2. **Fewer wasted iterations.** Market-specific guidance (black
+   triangle, Boxed Warning) is in the *first* generation call's
    prompt, not only surfaced after a failed check — a correct first
    draft costs one call end-to-end; a wrong one costs two full calls
-   (generate + revise) for the same result.
-2. **Prompt caching on the one big stable block.** `generator.py`'s
+   (generate + revise) for the same result. A stuck-loop detector also
+   stops the whole run after 2 identical failures instead of burning a
+   3rd call repeating a mistake that's already proven not to fix itself.
+3. **Prompt caching on the one big stable block.** `generator.py`'s
    `SYSTEM_PROMPT` is loaded once and reused byte-for-byte forever —
    it's deliberately market-agnostic (market content lives in the
    per-call user prompt instead) specifically so it stays one constant
@@ -77,10 +128,9 @@ of impact:
    no code needed, which is also why the system prompt wasn't
    aggressively shrunk when asked to optimize; dropping it under
    ~1024 tokens would forfeit that automatic discount.
-3. **Bounded loop + early exit.** `MAX_ITERATIONS = 3`, and the loop
-   already stops as soon as only non-blocking warnings remain instead
-   of spending a 3rd call chasing a check that was never going to
-   block.
+4. **Soft review is opt-out and only runs once, on success.** One
+   extra call maximum per run, never spent on a draft that isn't
+   structurally complete yet.
 
 `LLMClient.last_usage` exposes real token/cache counts after every
 call (`input_tokens`, `output_tokens`, and on Anthropic,
@@ -108,15 +158,11 @@ export ANTHROPIC_API_KEY="..."
 # CLI smoke test (mirrors your sample input: UK, HCP, Dovato, pre-launch awareness)
 python pipeline.py
 
+# Same thing, LangGraph orchestration instead — prints each node as it runs
+python pipeline_langgraph.py
+
 # Full UI
 streamlit run app.py
-
-# API Server
-uvicorn api:app --reload
-
-# Docker Deployment
-docker build -t mlr-pipeline .
-docker run -p 8000:8000 mlr-pipeline
 
 # After you've run a few briefs through it:
 python analyze_traces.py
@@ -126,15 +172,17 @@ python analyze_traces.py
 
 | File | Role |
 |---|---|
-| `schema.py` | `CampaignBrief`, `GradeItem`, `GradeReport`, `PipelineResult` — the data contracts |
+| `schema.py` | `CampaignBrief`, `GradeItem`, `GradeReport`, `PipelineResult`, `SoftReviewNote` — the data contracts |
 | `brand_config.py` | Per-brand color tokens + AE reporting line + PI placeholder (placeholders, not real brand-guideline values) |
-| `regulatory.py` | Free-text market/audience resolution + per-market compliance notes (word-boundary matched, not naive substring) |
-| `prompts/generator_system.md` | The Generator's system prompt — market-agnostic on purpose, see Token cost strategy below |
-| `llm_client.py` | Provider-agnostic LLM wrapper (Azure AI Foundry / Anthropic) |
+| `regulatory.py` | Free-text market/audience resolution: dictionary → disk cache → LLM fallback |
+| `prompts/generator_system.md` | The Generator's system prompt — market-agnostic on purpose, see Token cost strategy above |
+| `llm_client.py` | Provider-agnostic LLM wrapper (Azure AI Foundry / Anthropic), with prompt caching |
 | `generator.py` | Brief → HTML, plus revision mode |
-| `grader.py` | 9 deterministic structural rules, `BeautifulSoup`-based |
-| `pipeline.py` | Orchestrates generate → grade → revise, up to 3 iterations |
-| `trace_logger.py` / `analyze_traces.py` | Append-only run log + failure-rate analysis |
+| `grader.py` | 11 deterministic structural rules + `GradingContext`, `BeautifulSoup`-based |
+| `soft_review.py` | Optional 1-call LLM advisory pass for subjective concerns, never blocking |
+| `pipeline.py` | Orchestrates resolve → generate → grade → revise → soft-review as a plain Python loop |
+| `pipeline_langgraph.py` | Same orchestration, as a LangGraph `StateGraph` |
+| `trace_logger.py` / `analyze_traces.py` | Append-only run log + failure-rate and resolution-cost analysis |
 | `app.py` | Streamlit UI matching your sample input format |
 
 ## Validated against your uploaded templates
@@ -158,4 +206,15 @@ grader bug.
   by design (see `prompts/generator_system.md`, rule 7); wiring in
   real approved assets is a deliberate separate step, not something to
   automate away.
-- **Loop 3** (event trigger) — API layer added via FastAPI in `api.py`, which exposes `run_pipeline()` over HTTP.
+- **Loop 3** (event trigger) — straightforward FastAPI wrapper around
+  `run_pipeline()` if/when you want brief submission to kick off a run
+  asynchronously instead of blocking the Streamlit request.
+- **`resolution_cache.json` is a flat, unbounded file** — fine for a
+  prototype's traffic volume; a real deployment would want an actual
+  TTL/eviction policy so a genuinely wrong LLM resolution (rare, but
+  possible) doesn't stay cached forever with no way to invalidate it.
+- **Two orchestration files to keep in sync** — `pipeline.py` and
+  `pipeline_langgraph.py` share every underlying function but
+  duplicate the stuck-detector and revision-loop *control flow*
+  logic. If you only end up needing one of them long-term, delete the
+  other rather than let them drift apart silently.

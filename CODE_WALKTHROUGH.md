@@ -296,7 +296,65 @@ generated differs.
 
 ---
 
-## 12. Why free text instead of dropdowns changes more than the UI
+## 12. A real bug caught via live testing: the truncation death spiral
+
+Worth documenting because it's a good example of a failure mode that
+only shows up under real constraints, not in a mock-based test.
+
+**What happened:** running the live demo for real, every single call
+(the first generation and both revisions) came back with
+`stop_reason: max_tokens` — the model was hitting the artifact
+sandbox's hard 1000-output-token cap and getting cut off mid-response,
+every time. The original compact system prompt asked the model to
+write the body copy and decoration first and the compliance footer
+(DRAFT watermark, `[CL ID]`, AE box, regulatory tag) *last* — so when
+the cap hit, exactly the checks that matter most were the ones that
+never got written. Same 4 rules failed, identically, on all 3
+attempts.
+
+**Why the revision loop made it worse, not better:** the original
+revision prompt said "here's the previous draft, patch only what's
+needed, return the full corrected HTML." But the previous draft was
+already truncated — possibly mid-tag — and "patch it, return the
+full thing" forces the model to reproduce that same too-long structure
+plus the fix, which hits the identical wall again. Three calls, same
+failure, zero progress. That's also three calls' worth of tokens spent
+confirming something the first call's `stop_reason` had already told
+us.
+
+**The fix, two parts:**
+1. **Reorder by priority, not by natural writing order.** The system
+   prompt now has an explicit "Part A / Part B" structure: every
+   compliance-critical element (watermark, job code, regulatory tag,
+   AE box, audience line) must be written *first*, tersely, before any
+   headline or body copy. If a cutoff happens now, it can only ever
+   lose decorative content, never a graded element.
+2. **Stop patching truncated output — regenerate minimally instead.**
+   `buildRevisionPrompt()` now checks `wasTruncated` (was the previous
+   `stop_reason` `max_tokens`?). If so, it doesn't send the broken
+   previous draft back for "patching" — it tells the model plainly
+   that the previous attempt was cut off, shows a short snippet of
+   where, and asks for a fresh, deliberately shorter attempt instead.
+
+**A second, more general fix that came out of this:** a "stuck
+detector" in both the live demo and `pipeline.py`/`app.py`. If the
+exact same set of rules fails on two consecutive attempts, the loop
+stops instead of spending a 3rd call on a strategy that's already
+proven not to work twice. This isn't specific to the token-cap
+scenario — an unrecognized, un-fixable prompt issue could produce the
+same symptom even with an uncapped `max_tokens` in the real Python
+pipeline, and there's no reason to pay for a 3rd identical failure to
+find that out. Tested directly: a mock client that always returns the
+same broken output now stops the pipeline after 2 calls instead of 3.
+
+The lesson generalizes past this one bug: **`stop_reason` is a signal
+you should always check, not just `usage.output_tokens`.** A response
+that "succeeded" (200 status, valid JSON, no exception) can still be
+silently incomplete, and silently-incomplete output feeding into
+"patch this" instructions is exactly how you get a loop that looks
+like it's iterating but is actually just re-failing the same way.
+
+## 13. Why free text instead of dropdowns changes more than the UI
 
 Converting market/audience/brand from `<select>`/enum to `<input
 type="text">`/`str` looks like a UI change but touches four files:
@@ -310,3 +368,77 @@ input back up means something has to do that interpretation, and it's
 better for that something to be one small, testable module
 (`regulatory.py`) than scattered `if "uk" in text.lower()` checks
 throughout the codebase.
+
+## 14. Dictionary → cache → LLM resolver, `GradingContext`, soft review, and the LangGraph version
+
+Four connected changes, all from the same underlying question: *if
+market/audience input is genuinely open-ended (not just UK/US/EU/Swiss
+but "Ireland," "formulary committee," anything), can a static
+dictionary really cover it — and if not, should the grader itself
+become an AI agent?*
+
+**Answer to the second half: no.** All 11 grader rules check objective
+facts (a border exists, a string is present). Making the grader
+agentic wouldn't add accuracy, it'd add cost and a self-grading
+weakness. The real gap was one layer up, in *resolution*, not grading.
+
+**The fix: `resolve_market()`/`resolve_audience()` now take an
+optional `client`.** Three tiers, cheapest first:
+1. Dictionary/keyword match (unchanged, free, instant).
+2. `resolution_cache.json` — a flat JSON file keyed by normalized
+   input string. Anything an LLM has resolved once gets cached forever
+   (well, until you delete the file — see the Known gaps note in
+   README.md about this having no eviction policy yet).
+3. An LLM call, ONLY reached if the first two miss, using a strict
+   "respond with only this JSON shape" system prompt
+   (`_MARKET_LLM_SYSTEM`/`_AUDIENCE_LLM_SYSTEM`) that requires a
+   `"confident": bool` field — an uncertain answer stays `known=False`
+   rather than the resolver quietly guessing.
+
+Tested directly (see the three-part test in this session): a known
+market makes zero resolution calls; an unrecognized one makes exactly
+one LLM call; the *same* unrecognized input on a completely separate
+`run_pipeline()` call afterward makes zero new calls, reading from
+disk instead.
+
+**`GradingContext` exists because resolution now happens once, not
+per-rule.** Before this change, 4 of the 11 grader rules each called
+`resolve_market(brief.market)` independently — harmless when it was a
+free dictionary lookup, but wasteful (or worse, a source of
+inconsistent results) once resolution could involve a cached-but-still
+non-trivial LLM round trip. Now `pipeline.py`/`pipeline_langgraph.py`
+resolve market and audience exactly once at the start of a run, bundle
+the result with brand tokens into a `GradingContext` dataclass, and
+every rule function, `generate()`, and `revise()` all read from that
+same resolved object. The grader's "zero LLM calls" guarantee is now
+provable by inspection: nothing in `grader.py` imports anything that
+could make a network call.
+
+**`soft_review.py` is the actually-agentic verifier the article
+describes** — for the subjective half of what a real MLR review checks
+that no rule can: implied claims, whether "fair balance" is genuinely
+balanced rather than technically present, tone. It's deliberately kept
+out of `GradeReport` entirely (a separate `PipelineResult.soft_review_notes`
+list) and only ever runs once, after every blocking rule already
+passes — spending it on a structurally incomplete draft would be
+pointless, and merging its output into the same list as the
+deterministic rules would make a second AI's opinion look as
+authoritative as a regex match, which it isn't.
+
+**`pipeline_langgraph.py` — built once the shape actually changed.**
+The earlier "no LangGraph" answer was for a 3-node loop; that was
+correct at the time. This is now resolve → generate → grade →
+soft_review with real conditional routing (loop back to generate, or
+proceed to soft_review, decided by `route_after_grade()`), which is
+where a graph-based orchestrator's value — declarative structure, and
+step-by-step tracing via `.stream()` with no `ui_log()` calls threaded
+by hand — starts to be worth the dependency. Critically, it does not
+reimplement anything: every node (`node_resolve`, `node_generate`,
+`node_grade`, `node_soft_review`) calls the exact same functions
+`pipeline.py` does. The stuck-detector logic is duplicated (LangGraph
+state updates don't mutate in place, so the "compare against the
+*previous* iteration's failures, using the state value from *before*
+this node's update" logic had to be written explicitly in
+`node_grade()` rather than inherited from a shared loop) — that
+duplication is the one real cost of maintaining both versions, called
+out directly in README.md's Known gaps.
