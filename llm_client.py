@@ -40,9 +40,7 @@ Env vars (Anthropic path, used only if the Azure ones are absent):
 from __future__ import annotations
 
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
 
 class LLMClient:
     def __init__(self):
