@@ -15,7 +15,7 @@ import json
 import time
 from pathlib import Path
 
-TRACE_FILE = Path(__file__).parent / "traces.jsonl"
+TRACE_FILE = Path(__file__).parent.parent / "traces.jsonl"
 
 
 def log_iteration(brief, grade_report, iteration: int) -> None:

@@ -65,21 +65,37 @@ class LLMClient:
         self.provider = "azure"
         self.last_usage = None  # populated after each complete() call; pipeline.py can log it
 
-        from openai import AzureOpenAI
-        self._client = AzureOpenAI(
-            api_key=os.environ["AZURE_OPENAI_API_KEY"],
-            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-        )
+        endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+        if endpoint.endswith("/v1") or endpoint.endswith("/v1/"):
+            from openai import OpenAI
+            self._client = OpenAI(
+                api_key=os.environ["AZURE_OPENAI_API_KEY"],
+                base_url=endpoint,
+                default_headers={"api-key": os.environ["AZURE_OPENAI_API_KEY"]}
+            )
+        else:
+            from openai import AzureOpenAI
+            self._client = AzureOpenAI(
+                api_key=os.environ["AZURE_OPENAI_API_KEY"],
+                azure_endpoint=endpoint,
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+            )
         self._deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
         self._is_reasoning = _is_reasoning_model(self._deployment)
 
-    def complete(self, system: str, user: str, max_tokens: int = 4000) -> str:
+    def complete(self, system: str, user: str, max_tokens: int = 4000, images: list[str] = None) -> str:
+        if images:
+            user_content = [{"type": "text", "text": user}]
+            for b64 in images:
+                user_content.append({"type": "image_url", "image_url": {"url": b64}})
+        else:
+            user_content = user
+
         kwargs = dict(
             model=self._deployment,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": user},
+                {"role": "user", "content": user_content},
             ],
         )
         if self._is_reasoning:
