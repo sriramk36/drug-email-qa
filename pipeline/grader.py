@@ -30,12 +30,14 @@ from core.schema import CampaignBrief, GradeItem, GradeReport, ContentClassifica
 from core.regulatory import MarketInfo, AudienceInfo
 
 
+from typing import Any
+
 @dataclass
 class GradingContext:
     tokens: dict
     market_info: MarketInfo
     audience_info: AudienceInfo
-
+    client: Any = None
 
 def _visible_body_text(soup: BeautifulSoup) -> str:
     """
@@ -251,6 +253,46 @@ def rule_uploaded_images_used(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
+import json
+
+def rule_brand_guidelines_llm(soup, raw_html, brief, ctx) -> GradeItem:
+    if not ctx.client:
+        return GradeItem(rule_id="brand_guidelines_llm", label="Brand Guidelines & Tone (LLM Judge)", passed=True, detail="Skipped — no LLM client provided to grader.", severity="warning")
+    
+    system = """You are an expert regulatory and brand reviewer acting as an automated judge.
+Evaluate the following HTML draft for strict brand guideline compliance, tone, and visual aesthetics.
+If the text implies unapproved efficacy, has a dangerous tone, uses totally inappropriate layout, or severely violates pharma brand safety, it FAILS.
+If it is safe, clean, and appropriate for the context, it PASSES.
+Respond with ONLY a JSON object: {"passed": true, "detail": "<short explanation>"} or {"passed": false, "detail": "<short explanation>"}"""
+    
+    user = f"Brand: {brief.brand}\nObjective: {brief.objective}\nAudience: {brief.audience}\n\nDraft HTML:\n{raw_html}"
+    try:
+        raw = ctx.client.complete(system=system, user=user, max_tokens=1500)
+        text = raw.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines)
+        res = json.loads(text)
+        passed = bool(res.get("passed", False))
+        detail = str(res.get("detail", "LLM rejected the brand voice/aesthetics."))
+        return GradeItem(
+            rule_id="brand_guidelines_llm",
+            label="Brand Guidelines & Tone (LLM Judge)",
+            passed=passed,
+            detail=detail
+        )
+    except Exception as e:
+        return GradeItem(
+            rule_id="brand_guidelines_llm",
+            label="Brand Guidelines & Tone (LLM Judge)",
+            passed=False,
+            detail=f"LLM judge failed to parse or execute: {str(e)}",
+            severity="warning"
+        )
+
+
 ALL_RULES = [
     rule_draft_watermark,
     rule_job_code_pending,
@@ -263,6 +305,7 @@ ALL_RULES = [
     rule_black_triangle_uk_eu,
     rule_boxed_warning_us,
     rule_uploaded_images_used,
+    rule_brand_guidelines_llm,
 ]
 
 

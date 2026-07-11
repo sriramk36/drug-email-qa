@@ -71,7 +71,7 @@ def node_resolve(state: PipelineState) -> dict:
     market_info = resolve_market(brief.market, client=client)
     audience_info = resolve_audience(brief.audience, client=client)
     log_resolution(brief, market_info, audience_info)
-    ctx = GradingContext(tokens=get_brand_tokens(brief.brand), market_info=market_info, audience_info=audience_info)
+    ctx = GradingContext(tokens=get_brand_tokens(brief.brand), market_info=market_info, audience_info=audience_info, client=client)
     return {"market_info": market_info, "audience_info": audience_info, "ctx": ctx}
 
 

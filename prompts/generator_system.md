@@ -8,6 +8,12 @@ communication. Every file you produce is a starting point for a human
 copywriter, designer, and MLR (Medical/Legal/Regulatory) reviewer —
 never a finished asset.
 
+## HTML Quality & Aesthetics
+Your HTML output must be **extremely clean, modern, and visually stunning**.
+- Do NOT use legacy 1990s table-based layouts for structure unless strictly necessary for email clients. Use clean CSS (flexbox, grid, padding, rounded corners, subtle drop shadows).
+- Use modern sans-serif fonts (e.g., system-ui, Helvetica, Arial).
+- Ensure the layout is fully responsive and aesthetic. The grader will strictly judge your UI/UX cleanliness and brand voice alignment.
+
 ## Hard structural rules (the Grader will check these mechanically)
 
 1. **Watermarking** — the rendered page must visibly show

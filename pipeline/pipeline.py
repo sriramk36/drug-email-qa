@@ -44,8 +44,12 @@ def run_pipeline(brief: CampaignBrief, client: LLMClient | None = None, run_soft
     audience_info = resolve_audience(brief.audience, client=client)
     log_resolution(brief, market_info, audience_info)
 
-    ctx = GradingContext(tokens=get_brand_tokens(brief.brand), market_info=market_info, audience_info=audience_info)
-
+    ctx = GradingContext(
+        tokens=get_brand_tokens(brief.brand),
+        market_info=market_info,
+        audience_info=audience_info,
+        client=client
+    )
     html = generate(brief, client, ctx)
     report = grade(html, brief, ctx, iteration=1)
     log_iteration(brief, report, iteration=1)

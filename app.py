@@ -190,7 +190,16 @@ if submitted:
         if not report.all_passed:
             st.error("⚠️ This draft failed blocking compliance checks. It is NOT ready for distribution.")
         components.html(html_preview, height=800, scrolling=True)
-        st.download_button("Download HTML", data=html_preview, file_name=f"{brief.brand}-draft.html", mime="text/html")
+        
+        # Auto-save to outputs directory
+        from pathlib import Path
+        output_filename = f"{brief.market}_{brief.audience}_{brief.brand}_{brief.channel}_{brief.classification}.html".replace(" ", "_").lower()
+        output_path = Path("outputs") / output_filename
+        output_path.parent.mkdir(exist_ok=True)
+        output_path.write_text(html_raw, encoding="utf-8")
+        st.success(f"💾 Automatically saved to `{output_path}`")
+        
+        st.download_button("Download HTML", data=html_preview, file_name=output_filename, mime="text/html")
 
     with tab_audit:
         st.subheader(f"Compliance Audit Report (Attempt {final_state['iteration']})")
