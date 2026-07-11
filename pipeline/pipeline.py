@@ -22,14 +22,14 @@ advisory only, never a verified finding.
 
 from __future__ import annotations
 
-from brand_config import get_brand_tokens
-from generator import generate, revise
-from grader import grade, GradingContext
-from llm_client import LLMClient
-from regulatory import resolve_market, resolve_audience
-from schema import CampaignBrief, PipelineResult
-from soft_review import soft_review
-from trace_logger import log_iteration, log_resolution
+from core.brand_config import get_brand_tokens
+from pipeline.generator import generate, revise
+from pipeline.grader import grade, GradingContext
+from core.llm_client import LLMClient
+from core.regulatory import resolve_market, resolve_audience
+from core.schema import CampaignBrief, PipelineResult
+from pipeline.soft_review import soft_review
+from core.trace_logger import log_iteration, log_resolution
 
 MAX_ITERATIONS = 3
 
@@ -113,6 +113,6 @@ if __name__ == "__main__":
             print(f"  cache read: {u['cache_read_input_tokens']} tokens (cheaper — exact discount depends on Azure's own pricing)")
         if u.get("reasoning_tokens"):
             print(f"  reasoning tokens: {u['reasoning_tokens']} (hidden thinking, not visible output — Azure reasoning models only)")
-    with open("last_run.html", "w") as f:
+    with open("outputs/last_run.html", "w", encoding="utf-8") as f:
         f.write(result.final_html)
-    print("\nWrote last_run.html")
+    print("\nWrote outputs/last_run.html")

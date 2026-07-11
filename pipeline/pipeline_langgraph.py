@@ -27,19 +27,22 @@ Graph shape:
 """
 
 from __future__ import annotations
+import sys
+if sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 from typing import Optional, TypedDict, Any
 
 from langgraph.graph import StateGraph, END
 
-from brand_config import get_brand_tokens
-from generator import generate as gen_generate, revise as gen_revise
-from grader import grade as gen_grade, GradingContext
-from llm_client import LLMClient
-from regulatory import resolve_market, resolve_audience, MarketInfo, AudienceInfo
-from schema import CampaignBrief, GradeReport, PipelineResult, SoftReviewNote
-from soft_review import soft_review as gen_soft_review
-from trace_logger import log_iteration, log_resolution
+from core.brand_config import get_brand_tokens
+from core.schema import CampaignBrief, PipelineResult, GradeReport, SoftReviewNote
+from core.llm_client import LLMClient
+from core.regulatory import resolve_market, resolve_audience, MarketInfo, AudienceInfo
+from pipeline.grader import GradingContext
+from pipeline import generator, grader
+from pipeline import soft_review as gen_soft_review
+from core.trace_logger import log_iteration, log_resolution
 
 MAX_ITERATIONS = 3
 
@@ -178,6 +181,6 @@ if __name__ == "__main__":
             print(f"  cache read: {u['cache_read_input_tokens']} tokens (cheaper — exact discount depends on Azure's own pricing)")
         if u.get("reasoning_tokens"):
             print(f"  reasoning tokens: {u['reasoning_tokens']} (hidden thinking, not visible output)")
-    with open("last_run_langgraph.html", "w") as f:
+    with open("outputs/last_run_langgraph.html", "w", encoding="utf-8") as f:
         f.write(final_state["html"])
-    print("\nWrote last_run_langgraph.html")
+    print("\nWrote outputs/last_run_langgraph.html")

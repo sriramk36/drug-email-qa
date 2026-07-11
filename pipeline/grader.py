@@ -26,8 +26,8 @@ import re
 from dataclasses import dataclass
 from bs4 import BeautifulSoup
 
-from schema import CampaignBrief, GradeItem, GradeReport, ContentClassification
-from regulatory import MarketInfo, AudienceInfo
+from core.schema import CampaignBrief, GradeItem, GradeReport, ContentClassification
+from core.regulatory import MarketInfo, AudienceInfo
 
 
 @dataclass
@@ -185,20 +185,6 @@ def rule_no_hardcoded_cta_url(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-def rule_logo_not_embedded(soup, raw_html, brief, ctx) -> GradeItem:
-    imgs = soup.find_all("img")
-    real_logo_imgs = [i for i in imgs if i.get("src") and not i.get("src", "").startswith(("placeholder", "#"))
-                       and "logo" in " ".join(i.get("class", [])).lower()]
-    ok = len(real_logo_imgs) == 0
-    return GradeItem(
-        rule_id="logo_placeholder",
-        label="Logo rendered as labeled placeholder, not a real embedded image",
-        passed=ok,
-        detail="No real logo image embedded — placeholder slot used." if ok
-        else "An <img> with a real src is being used for a logo slot; this must stay a placeholder in a draft.",
-    )
-
-
 # --- Market-specific rules -------------------------------------------------
 # The actual answer to "EU rules are different from US rules, right?" — separate
 # from the tag-swap in rule_regulatory_footer_tag because the *content* differs
@@ -242,6 +228,29 @@ def rule_boxed_warning_us(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
+def rule_uploaded_images_used(soup, raw_html, brief, ctx) -> GradeItem:
+    if not brief.uploaded_images:
+        return GradeItem(
+            rule_id="uploaded_images_used",
+            label="All uploaded images are used in the draft",
+            passed=True,
+            detail="No images uploaded."
+        )
+    
+    missing = []
+    for fname in brief.uploaded_images.keys():
+        if f"uploaded:{fname}" not in raw_html:
+            missing.append(fname)
+            
+    ok = len(missing) == 0
+    return GradeItem(
+        rule_id="uploaded_images_used",
+        label="All uploaded images are used in the draft",
+        passed=ok,
+        detail="All uploaded images are present." if ok else f"Missing {len(missing)} uploaded image(s): {', '.join(missing)}"
+    )
+
+
 ALL_RULES = [
     rule_draft_watermark,
     rule_job_code_pending,
@@ -251,9 +260,9 @@ ALL_RULES = [
     rule_pi_link_if_branded,
     rule_regulatory_footer_tag,
     rule_no_hardcoded_cta_url,
-    rule_logo_not_embedded,
     rule_black_triangle_uk_eu,
     rule_boxed_warning_us,
+    rule_uploaded_images_used,
 ]
 
 

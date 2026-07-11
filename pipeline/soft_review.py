@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from schema import CampaignBrief, SoftReviewNote
+from core.schema import CampaignBrief, SoftReviewNote
 
 
 _SOFT_REVIEW_SYSTEM = """You are doing a SECOND-PASS advisory read of pharma marketing draft \
@@ -39,6 +39,9 @@ regex/DOM check structurally cannot catch:
 - Tone that doesn't match clinical/professional register for the stated audience
 - Anything that reads as engineered to survive an automated compliance check rather than to \
   actually satisfy its intent (e.g. a technically-present AE box formatted to be easy to skim past)
+- Mismatched or inappropriate imagery. If images are provided in the prompt, verify that their \
+  contents are relevant and appropriate for the context (e.g., flag if a joyful lifestyle image is \
+  used inappropriately next to a severe Boxed Warning, or if the logo belongs to the wrong brand).
 
 Respond with ONLY a JSON array, no other text, no markdown fences. Each item:
 {"concern": "<short label>", "detail": "<one or two sentences, specific to what's in this draft>"}
@@ -63,7 +66,8 @@ def soft_review(html: str, brief: CampaignBrief, client: Any) -> list[SoftReview
 DRAFT HTML:
 {html}
 """
-    raw = client.complete(system=_SOFT_REVIEW_SYSTEM, user=user, max_tokens=500)
+    images = list(brief.uploaded_images.values()) if brief.uploaded_images else None
+    raw = client.complete(system=_SOFT_REVIEW_SYSTEM, user=user, max_tokens=2000, images=images)
     text = raw.strip()
     if text.startswith("```"):
         lines = text.splitlines()[1:]

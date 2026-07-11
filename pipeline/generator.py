@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from schema import CampaignBrief, GradeReport
-from regulatory import market_addendum
-from llm_client import LLMClient
-from grader import GradingContext
+from core.schema import CampaignBrief, GradeReport
+from core.regulatory import market_addendum
+from core.llm_client import LLMClient
+from pipeline.grader import GradingContext
 
 # Loaded once at import time and reused byte-for-byte on every call, for every
 # brand and market. Deliberately market-agnostic — see llm_client.py: this is
@@ -26,7 +26,7 @@ from grader import GradingContext
 # brief's generate/revise loop. Market-specific rules live in regulatory.py
 # and get injected into the (per-call, not cached the same way) USER prompt
 # per-call) USER prompt instead — see _brief_prompt() below.
-SYSTEM_PROMPT = Path(__file__).parent.joinpath("prompts", "generator_system.md").read_text()
+SYSTEM_PROMPT = Path(__file__).parent.parent.joinpath("prompts", "generator_system.md").read_text()
 
 
 def _extract_html(raw: str) -> str:
@@ -52,6 +52,7 @@ Generate the HTML draft for this brief:
 - Brand: {brief.brand} ({tokens['company']})
 - Objective: {brief.objective}
 - Classification: {brief.classification.value}
+- Uploaded Images: {", ".join(brief.uploaded_images.keys()) if brief.uploaded_images else "None"}
 
 Market-specific compliance notes (these vary by market — apply only what's relevant here):
 {market_addendum(ctx.market_info)}
@@ -91,6 +92,7 @@ Brand tokens (unchanged from the original brief):
 - Secondary color: {tokens['secondary']}
 - AE reporting line: {tokens['ae_report_line']}
 - PI link placeholder text: {tokens['pi_link_placeholder']}
+- Uploaded Images: {", ".join(brief.uploaded_images.keys()) if brief.uploaded_images else "None"}
 
 Return ONLY the corrected full HTML file. No preamble, no markdown fences.
 """
