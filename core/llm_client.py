@@ -41,6 +41,9 @@ from __future__ import annotations
 
 import os
 import re
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def _is_reasoning_model(deployment_name: str) -> bool:

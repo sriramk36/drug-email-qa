@@ -139,7 +139,7 @@ def _llm_resolve_market(market_text: str, client: Any) -> MarketInfo:
     # No try/except here on purpose — if the API call fails or returns malformed JSON,
     # that should surface as a real, visible exception, not a fabricated "resolution failed"
     # result that looks like a normal outcome. Let it crash loudly.
-    raw = client.complete(system=_MARKET_LLM_SYSTEM, user=f"Market/country: {market_text}", max_tokens=300)
+    raw = client.complete(system=_MARKET_LLM_SYSTEM, user=f"Market/country: {market_text}", max_tokens=800)
     data = _parse_json_response(raw)
     confident = bool(data.get("confident", False))
     return MarketInfo(
@@ -225,7 +225,7 @@ judgment — most real audience descriptions should resolve to true or false con
 def _llm_resolve_audience(audience_text: str, client: Any) -> AudienceInfo:
     # No try/except here either, same reasoning as _llm_resolve_market — a failed API call
     # or bad JSON should crash visibly, not silently resolve to "probably not HCP."
-    raw = client.complete(system=_AUDIENCE_LLM_SYSTEM, user=f"Audience: {audience_text}", max_tokens=200)
+    raw = client.complete(system=_AUDIENCE_LLM_SYSTEM, user=f"Audience: {audience_text}", max_tokens=800)
     data = _parse_json_response(raw)
     confident = bool(data.get("confident", False))
     return AudienceInfo(

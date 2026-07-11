@@ -42,7 +42,7 @@ from core.regulatory import resolve_market, resolve_audience, MarketInfo, Audien
 from pipeline.grader import GradingContext
 from pipeline.generator import generate as gen_generate, revise as gen_revise
 from pipeline.grader import grade as gen_grade
-from pipeline.soft_review import run_soft_review as gen_soft_review
+from pipeline.soft_review import soft_review as gen_soft_review
 from core.trace_logger import log_iteration, log_resolution
 
 MAX_ITERATIONS = 3
