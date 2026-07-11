@@ -15,9 +15,9 @@ import time
 import streamlit as st
 import streamlit.components.v1 as components
 
-from schema import CampaignBrief, Channel, EmailType, ContentClassification
-from llm_client import LLMClient
-from pipeline_langgraph import build_graph
+from core.schema import CampaignBrief, Channel, EmailType, ContentClassification
+from core.llm_client import LLMClient
+from pipeline.pipeline_langgraph import build_graph
 
 st.set_page_config(page_title="MLR Draft Pipeline (LangGraph)", layout="wide")
 
@@ -54,6 +54,7 @@ with st.form("brief_form"):
         )
     with col3:
         objective = st.text_area("Objective", "Pre-launch HIV treatment awareness", height=120)
+        uploaded_files = st.file_uploader("Upload images (optional)", accept_multiple_files=True, type=["png", "jpg", "jpeg", "gif"])
         run_soft = st.checkbox(
             "Run soft review",
             value=False,
@@ -65,9 +66,19 @@ with st.form("brief_form"):
     submitted = st.form_submit_button("Generate draft (live, LangGraph)")
 
 if submitted:
+    import base64
+    image_map = {}
+    uploaded_names = []
+    if uploaded_files:
+        for f in uploaded_files:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+            image_map[f.name] = f"data:{f.type};base64,{b64}"
+            uploaded_names.append(f.name)
+
     brief = CampaignBrief(
         channel=channel, email_type=email_type, market=market, audience=audience,
         brand=brand, objective=objective, classification=classification,
+        uploaded_images=image_map
     )
 
     status_box = st.status("Running LangGraph pipeline...", expanded=True)
@@ -152,6 +163,11 @@ if submitted:
             st.info(f"**{n.concern}** — {n.detail}")
 
     html = final_state["html"]
+    
+    # Inject base64 images into HTML replacing the placeholders
+    for fname, data_uri in brief.uploaded_images.items():
+        html = html.replace(f"uploaded:{fname}", data_uri)
+    
     st.subheader("Rendered draft")
     components.html(html, height=900, scrolling=True)
 

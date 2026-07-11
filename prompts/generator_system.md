@@ -50,10 +50,7 @@ never a finished asset.
    were already verified — that is exactly the kind of claim that gets
    a real MLR review kicked back, and it's the one thing this pipeline
    must not paper over.
-7. **Logos are placeholder slots only** — never draw or embed an actual
-   brand/company logo. Render a labeled slot
-   (`[REQUIRED: brand logo — Assets/Logo/{brand}/logo-header.*]`) the
-   same way the reference templates do.
+7. **Uploaded Images** — You may be provided with a list of uploaded image filenames in the prompt. If images are provided, you MUST use them in your HTML design. When using an uploaded image, set the image source as exactly `uploaded:<filename>`, for example `<img src="uploaded:logo.png">`. If no images are provided, render a labeled slot (`[REQUIRED: brand logo — Assets/Logo/{brand}/logo-header.*]`) instead of an actual image tag.
 8. **CTA URLs** — always `href="#"` with a visible `[TBC]` annotation
    in the audit footer, never a real or invented destination URL.
 
