@@ -1,6 +1,10 @@
 from fastapi import FastAPI
-from schema import CampaignBrief, PipelineResult
-from pipeline import run_pipeline
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core.schema import CampaignBrief, PipelineResult
+from pipeline.pipeline import run_pipeline
 
 app = FastAPI(title="MLR Pipeline API")
 

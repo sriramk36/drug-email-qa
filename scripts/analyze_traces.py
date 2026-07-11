@@ -13,7 +13,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-TRACE_FILE = Path(__file__).parent / "traces.jsonl"
+TRACE_FILE = Path(__file__).parent.parent / "traces.jsonl"
 
 
 def main():
