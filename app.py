@@ -25,11 +25,70 @@ st.set_page_config(page_title="MLR Draft Pipeline", layout="wide", initial_sideb
 # --- CSS Overrides ---
 st.markdown("""
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    /* Base typography */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+
+    /* Status Cards */
+    .status-card { 
+        padding: 1.2rem; 
+        border-radius: 12px; 
+        margin-bottom: 1rem; 
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        color: #e5e7eb;
+    }
+    .status-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+    }
+    
+    /* Card Variants */
+    .status-pass { 
+        border-left: 6px solid #10b981; 
+        background: linear-gradient(90deg, rgba(16, 185, 129, 0.1) 0%, rgba(255,255,255,0.02) 100%);
+    }
+    .status-fail { 
+        border-left: 6px solid #ef4444; 
+        background: linear-gradient(90deg, rgba(239, 68, 68, 0.1) 0%, rgba(255,255,255,0.02) 100%);
+    }
+    .status-warn { 
+        border-left: 6px solid #f59e0b; 
+        background: linear-gradient(90deg, rgba(245, 158, 11, 0.1) 0%, rgba(255,255,255,0.02) 100%);
+    }
+
+    /* Card Details */
+    .card-detail {
+        font-size: 0.9em; 
+        color: #9ca3af;
+        margin-top: 0.4rem;
+        display: block;
+        line-height: 1.5;
+    }
+
+    /* Primary Button override */
+    [data-testid="stFormSubmitButton"] > button {
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+        color: white;
+        border: none;
+        font-weight: 600;
+        border-radius: 8px;
+        transition: all 0.2s ease;
+    }
+    [data-testid="stFormSubmitButton"] > button:hover {
+        background: linear-gradient(135deg, #4f46e5 0%, #9333ea 100%);
+        transform: scale(1.02);
+        color: white;
+    }
+    
+    /* Main header margin tweak */
     .st-emotion-cache-1v0mbdj { margin-top: -3rem; }
-    .status-card { padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid #ddd; }
-    .status-pass { background-color: rgba(0, 200, 0, 0.1); border-left: 5px solid green; }
-    .status-fail { background-color: rgba(200, 0, 0, 0.1); border-left: 5px solid red; }
-    .status-warn { background-color: rgba(255, 165, 0, 0.1); border-left: 5px solid orange; }
     </style>
 """, unsafe_allow_html=True)
 

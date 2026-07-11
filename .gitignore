@@ -25,3 +25,7 @@ uploads/
 # Outputs
 outputs/
 
+
+# Traces and Caches
+*.jsonl
+core/resolution_cache.json
