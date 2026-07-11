@@ -114,7 +114,7 @@ with st.sidebar:
         st.divider()
         objective = st.text_area("Objective", "Pre-launch HIV treatment awareness", height=80)
         uploaded_files = st.file_uploader("Upload images (optional)", accept_multiple_files=True, type=["png", "jpg", "jpeg", "gif"])
-        run_soft = st.checkbox("Run soft review (AI)", value=False, help="Runs 1 extra subjective AI call if structural checks pass.")
+        run_soft = st.checkbox("Run soft review (AI)", value=True, help="Runs 1 extra subjective AI call if structural checks pass.")
         
         submitted = st.form_submit_button("Generate Draft 🚀", use_container_width=True)
 
