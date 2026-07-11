@@ -110,9 +110,9 @@ if __name__ == "__main__":
         u = client.last_usage
         print(f"\nFinal call usage: {u.get('input_tokens')} in / {u.get('output_tokens')} out tokens")
         if u.get("cache_read_input_tokens"):
-            print(f"  cache read: {u['cache_read_input_tokens']} tokens (~90% cheaper than fresh input)")
-        if u.get("cache_creation_input_tokens"):
-            print(f"  cache write: {u['cache_creation_input_tokens']} tokens (one-time 1.25x cost)")
+            print(f"  cache read: {u['cache_read_input_tokens']} tokens (cheaper — exact discount depends on Azure's own pricing)")
+        if u.get("reasoning_tokens"):
+            print(f"  reasoning tokens: {u['reasoning_tokens']} (hidden thinking, not visible output — Azure reasoning models only)")
     with open("last_run.html", "w") as f:
         f.write(result.final_html)
     print("\nWrote last_run.html")

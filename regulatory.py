@@ -82,33 +82,32 @@ class MarketInfo(BaseModel):
     known: bool
     aliases: list[str] = []
     notes: list[str] = []
-    source: str  # "dictionary" | "cache" | "llm" | "llm_error" | "unresolved"
+    source: str  # "dictionary" | "cache" | "llm" | "unresolved" (no "llm_error" - failures raise, not silently degrade)
 
 
 class AudienceInfo(BaseModel):
     audience_text: str
     is_hcp: bool
     known: bool
-    source: str  # "keyword" | "cache" | "llm" | "llm_error" | "unresolved"
+    source: str  # "keyword" | "cache" | "llm" | "unresolved" (no "llm_error" - failures raise, not silently degrade)
     reasoning: str = ""
 
 
 # --- cache -------------------------------------------------------------
 
 def _load_cache() -> dict:
+    # No try/except — a corrupted resolution_cache.json should be a visible
+    # error you fix (or delete the file), not a silent "treat it as empty."
     if _CACHE_PATH.exists():
-        try:
-            return json.loads(_CACHE_PATH.read_text())
-        except Exception:
-            return {}
+        return json.loads(_CACHE_PATH.read_text())
     return {}
 
 
 def _save_cache(cache: dict) -> None:
-    try:
-        _CACHE_PATH.write_text(json.dumps(cache, indent=2))
-    except Exception:
-        pass  # cache is a cost optimization, never something a run should fail over
+    # Same reasoning — if this can't write (permissions, disk full, whatever),
+    # you want to know, not have every run silently pay for LLM calls it
+    # thinks it's caching but actually isn't.
+    _CACHE_PATH.write_text(json.dumps(cache, indent=2))
 
 
 def _parse_json_response(raw: str) -> dict:
@@ -137,27 +136,21 @@ citation you're not sure about — an empty "notes" list is better than a wrong 
 
 
 def _llm_resolve_market(market_text: str, client: Any) -> MarketInfo:
-    try:
-        raw = client.complete(system=_MARKET_LLM_SYSTEM, user=f"Market/country: {market_text}", max_tokens=300)
-        data = _parse_json_response(raw)
-        confident = bool(data.get("confident", False))
-        return MarketInfo(
-            market_text=market_text,
-            tags=data.get("tags", []) if confident else [],
-            body_name=data.get("body_name") or f"[LLM UNCERTAIN about '{market_text}' — confirm manually]",
-            known=confident,
-            aliases=[market_text.strip().lower()],
-            notes=data.get("notes", []) if confident else [],
-            source="llm",
-        )
-    except Exception as e:
-        return MarketInfo(
-            market_text=market_text, tags=[],
-            body_name=f"[LLM RESOLUTION FAILED for '{market_text}': {type(e).__name__}]",
-            known=False, aliases=[market_text.strip().lower()] if market_text else [],
-            notes=["LLM-based resolution failed — confirm applicable code manually."],
-            source="llm_error",
-        )
+    # No try/except here on purpose — if the API call fails or returns malformed JSON,
+    # that should surface as a real, visible exception, not a fabricated "resolution failed"
+    # result that looks like a normal outcome. Let it crash loudly.
+    raw = client.complete(system=_MARKET_LLM_SYSTEM, user=f"Market/country: {market_text}", max_tokens=300)
+    data = _parse_json_response(raw)
+    confident = bool(data.get("confident", False))
+    return MarketInfo(
+        market_text=market_text,
+        tags=data.get("tags", []) if confident else [],
+        body_name=data.get("body_name") or f"[LLM UNCERTAIN about '{market_text}' — confirm manually]",
+        known=confident,
+        aliases=[market_text.strip().lower()],
+        notes=data.get("notes", []) if confident else [],
+        source="llm",
+    )
 
 
 def resolve_market(market_text: str, client: Optional[Any] = None) -> MarketInfo:
@@ -230,24 +223,18 @@ judgment — most real audience descriptions should resolve to true or false con
 
 
 def _llm_resolve_audience(audience_text: str, client: Any) -> AudienceInfo:
-    try:
-        raw = client.complete(system=_AUDIENCE_LLM_SYSTEM, user=f"Audience: {audience_text}", max_tokens=200)
-        data = _parse_json_response(raw)
-        confident = bool(data.get("confident", False))
-        return AudienceInfo(
-            audience_text=audience_text,
-            is_hcp=bool(data.get("is_hcp", False)) if confident else False,
-            known=confident,
-            source="llm",
-            reasoning=data.get("reasoning", ""),
-        )
-    except Exception as e:
-        return AudienceInfo(
-            audience_text=audience_text, is_hcp=False, known=False, source="llm_error",
-            reasoning=f"LLM-based resolution failed ({type(e).__name__}) — defaulting to "
-                      f"non-HCP (the safer default: it makes audience_tag non-blocking rather "
-                      f"than silently skipping a check that should have applied).",
-        )
+    # No try/except here either, same reasoning as _llm_resolve_market — a failed API call
+    # or bad JSON should crash visibly, not silently resolve to "probably not HCP."
+    raw = client.complete(system=_AUDIENCE_LLM_SYSTEM, user=f"Audience: {audience_text}", max_tokens=200)
+    data = _parse_json_response(raw)
+    confident = bool(data.get("confident", False))
+    return AudienceInfo(
+        audience_text=audience_text,
+        is_hcp=bool(data.get("is_hcp", False)) if confident else False,
+        known=confident,
+        source="llm",
+        reasoning=data.get("reasoning", ""),
+    )
 
 
 def resolve_audience(audience_text: str, client: Optional[Any] = None) -> AudienceInfo:

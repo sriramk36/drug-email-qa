@@ -125,22 +125,60 @@ crash instead of a known limitation. Warning is the honest middle:
 
 ---
 
-## 5. `llm_client.py` — provider-agnostic LLM wrapper
+## 5. `llm_client.py` — Azure OpenAI only, no fallback
 
 ```python
 class LLMClient:
     def __init__(self):
-        if AZURE_AI_FOUNDRY_* env vars set: use openai.OpenAI(base_url=azure_endpoint)
-        elif ANTHROPIC_API_KEY set: use anthropic.Anthropic()
+        if not (AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT):
+            raise RuntimeError(...)  # no fallback provider — this is the only path
+        self._client = AzureOpenAI(api_key=..., azure_endpoint=..., api_version=...)
 ```
 
-Azure AI Foundry's chat completions endpoint speaks the same wire
-protocol as OpenAI's API, so pointing the standard `openai` Python SDK
-at your Azure endpoint just works — no Azure-specific SDK needed. This
-is the same GPT-4o-mini deployment pattern from your Orbit SDR project.
-Nothing else in the codebase imports `openai` or `anthropic` directly —
-only this file does, which is what makes swapping providers a one-file
-change.
+This went through two real revisions worth knowing about:
+
+**Revision 1 — the client class was wrong.** The first version pointed
+plain `openai.OpenAI(base_url=...)` at an Azure endpoint, which works
+for Azure AI Foundry's newer unified "models" endpoint (genuinely
+OpenAI-wire-compatible) but not for a classic Azure OpenAI resource,
+which requires an `api-version` query parameter on every request. The
+actual credentials in use (`AZURE_OPENAI_API_KEY` /
+`AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_VERSION`) are the classic
+pattern, which needs `openai.AzureOpenAI` specifically — that class
+handles the api-version plumbing automatically.
+
+**Revision 2 — reasoning models need different parameters.** The
+deployment is `gpt-5-mini`, a reasoning model. Reasoning models reject
+`temperature` outright and require `max_completion_tokens` instead of
+`max_tokens` — sending the wrong ones is a hard API error, not a
+warning. `_is_reasoning_model()` is a small name-pattern check
+(`"gpt-5" in name`, or matches `o1`/`o3`/`o4`-style names) that
+switches which parameters get sent. It also sets
+`reasoning_effort="low"`, because reasoning models spend hidden
+"thinking" tokens before writing visible output — real cost that
+never shows up as content — and a templated HTML draft doesn't need
+deep deliberation.
+
+**Revision 3 — the fallback chain itself got removed.** Earlier
+versions of this file tried three things in order: a classic Azure
+resource, then an Azure AI Foundry endpoint, then Anthropic, using
+whichever env vars happened to be set. That's gone. There's exactly
+one real credential this project uses, so `__init__` checks for
+exactly that one, and raises immediately with a specific "these env
+vars are missing" message if it's not there — no silent attempt at
+something else. Same principle applied throughout `regulatory.py` and
+`soft_review.py`: their LLM-call try/except blocks, which used to
+catch a failed API call and return a fake "resolution failed" /
+"review unavailable" result, got removed too. A failed call now raises
+a real exception. See §15 for the full reasoning on why that
+distinction (honest uncertainty vs. a hidden failure) matters.
+
+`last_usage` is normalized to one shape (`input_tokens`,
+`output_tokens`, and `cache_read_input_tokens` / `reasoning_tokens`
+when Azure returns them) so `app.py`/`pipeline.py`'s logging code
+doesn't need to know which provider answered — a smaller holdover from
+when there were multiple providers to normalize between, kept because
+it's still useful even with one.
 
 ---
 
@@ -246,14 +284,18 @@ this version is intentionally the minimum useful slice of that idea.
 
 ## 10. `app.py` — Streamlit UI
 
-The only thing worth calling out here versus the pipeline files: it
-doesn't call `run_pipeline()` as one opaque function anymore (an
-earlier version did). It inlines the generate→grade→revise loop
-directly so it can call `st.status()`/`ui_log()` after *every*
-individual step — generation, each of the 9 rule results, each
-revision — instead of only showing a result at the very end. That's
-the same "detailed logs and steps" request you made for the browser
-demo, applied to the Python side too.
+This went through two real versions. The first inlined its own
+generate→grade→revise loop (duplicating `pipeline.py`'s logic) so it
+could call `st.status()`/`ui_log()` after every individual step. The
+current version doesn't do that anymore — it calls
+`pipeline_langgraph.py`'s `build_graph().stream(...)` directly and
+logs from the graph's own node updates as they arrive. Same
+step-by-step visibility, but it comes from actually running the graph
+engine instead of hand-written logging calls threaded through a
+custom loop — which is the concrete version of the "LangGraph gives
+you free incremental tracing" claim from §14, not just a description
+of it. Soft review is a checkbox in the form, off by default, so
+nothing costs an extra call unless explicitly requested.
 
 ---
 
@@ -265,9 +307,9 @@ port**, not a separate implementation:
 
 | | Python (`grader.py`, `regulatory.py`) | Browser (`live-loop-demo.html`) |
 |---|---|---|
-| Grading logic | `BeautifulSoup` + regex | `DOMParser` + regex — same 9 rules, same word-boundary alias matching, ported 1:1 |
+| Grading logic | `BeautifulSoup` + regex | `DOMParser` + regex — same 11 rules, same word-boundary alias matching, ported 1:1 |
 | Generator output | Full desktop+mobile split mockup, unbounded length | Compact single-column draft, hard-capped at 1000 output tokens (artifact sandbox limit) |
-| LLM call | Your Azure AI Foundry / Anthropic key, server-side | Anthropic API, browser-side, handled automatically by the artifact runtime — no key needed from you |
+| LLM call | Your Azure OpenAI key, server-side, no fallback provider | Anthropic API, browser-side — a platform constraint of the artifact sandbox this demo runs in, not a choice made in this codebase; doesn't touch your Azure credentials at all |
 | Persistence | `traces.jsonl` on disk | None — resets on refresh |
 | UI feedback | Terminal `print()` / Streamlit `st.status()` | Live stepper (5 pipeline stages) + scrolling log with real token counts per call |
 
@@ -442,3 +484,56 @@ this node's update" logic had to be written explicitly in
 `node_grade()` rather than inherited from a shared loop) — that
 duplication is the one real cost of maintaining both versions, called
 out directly in README.md's Known gaps.
+
+## 15. Removing every fallback-on-failure pattern
+
+A late but important pass: going through every `except Exception` in
+the codebase and asking, for each one, "does this hide a real failure
+behind something that looks like a normal result?"
+
+**What got removed, and why each one was actually a problem:**
+
+- `llm_client.py` used to try three providers in sequence (classic
+  Azure OpenAI → Azure AI Foundry → Anthropic) based on whichever env
+  vars happened to be set. Harmless-looking, but it means a
+  misconfigured primary credential doesn't fail — it silently runs on
+  a *different* provider/model than you thought you were using. Now
+  there's exactly one path, and it raises immediately if unconfigured.
+- `regulatory.py`'s `_llm_resolve_market()` / `_llm_resolve_audience()`
+  used to catch any exception from the API call and return a
+  `MarketInfo`/`AudienceInfo` with `source="llm_error"` — structurally
+  identical to a legitimate "unresolved" result. Downstream code (the
+  grader, the generator prompt) couldn't tell "the AI said it doesn't
+  know" apart from "the API call threw an exception." Those are very
+  different situations — one is information, the other is an outage —
+  and collapsing them into the same shape actively hid the second one.
+- `soft_review.py` used to catch a failed call and return a
+  `SoftReviewNote(concern="Soft review unavailable", ...)` — which,
+  critically, still renders as a normal-looking advisory note in the
+  UI. Someone skimming the output could easily read that as "the AI
+  looked and found one minor thing," not "the AI never actually ran."
+- `regulatory.py`'s cache read/write also lost its try/except. A
+  corrupted `resolution_cache.json` or an unwritable disk used to
+  silently degrade to "treat the cache as empty" — which means every
+  future run silently pays for LLM calls it thinks it's caching but
+  isn't, with no visible signal that caching stopped working at all.
+
+**What deliberately did NOT change, because it isn't the same thing:**
+`resolve_market(text, client=None)` — no client passed at all — still
+returns an honest `known=False` result instead of raising, and a
+*successful* LLM call that says `"confident": false` still resolves
+the same way. Neither of those is a failure being papered over; both
+are legitimate outcomes ("no AI lookup was requested" and "the AI
+looked and genuinely doesn't know" are both real, valid answers). The
+rule that ended up mattering: **degrading gracefully on an honest "I
+don't know" is fine; degrading gracefully on "something broke" is
+not** — the second one only ever looks safe, right up until it costs
+you the ability to tell a real outage apart from normal operation.
+
+**One exception that's a platform constraint, not a violation of this
+rule:** `live-loop-demo.html` still calls the Anthropic API, because
+the artifact sandbox it runs in only supports that — it's not part of
+the actual Python pipeline, doesn't read your Azure credentials, and
+isn't something this codebase chose. Everything under
+`requirements.txt` / `pipeline_langgraph.py` / `app.py` is Azure-only
+with no exceptions.

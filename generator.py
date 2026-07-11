@@ -18,10 +18,13 @@ from grader import GradingContext
 
 # Loaded once at import time and reused byte-for-byte on every call, for every
 # brand and market. Deliberately market-agnostic — see llm_client.py: this is
-# what lets it be cached as one stable prefix (Anthropic: explicit cache_control;
-# Azure AI Foundry/OpenAI: automatic, since it's already >1024 tokens) across the
-# entire app's lifetime, not just within a single brief's generate/revise loop.
-# Market-specific rules live in regulatory.py and get injected into the (uncached,
+# what lets it stay one stable prefix (Azure documents automatic caching on
+# repeated prompts >=1024 tokens, though this hasn't been independently
+# verified for a reasoning-model deployment specifically — check
+# usage.cache_read_input_tokens on a real run rather than trusting this
+# comment) across the entire app's lifetime, not just within a single
+# brief's generate/revise loop. Market-specific rules live in regulatory.py
+# and get injected into the (per-call, not cached the same way) USER prompt
 # per-call) USER prompt instead — see _brief_prompt() below.
 SYSTEM_PROMPT = Path(__file__).parent.joinpath("prompts", "generator_system.md").read_text()
 

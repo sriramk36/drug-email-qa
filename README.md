@@ -125,36 +125,94 @@ of impact:
    `SYSTEM_PROMPT` is loaded once and reused byte-for-byte forever —
    it's deliberately market-agnostic (market content lives in the
    per-call user prompt instead) specifically so it stays one constant
-   ~1000-token prefix. `llm_client.py` tags it with Anthropic's
-   `cache_control: {"type": "ephemeral"}`, giving a ~90% discount on
-   every call after the first. On Azure AI Foundry/OpenAI-compatible
-   endpoints, caching on a >=1024-token repeated prefix is automatic —
-   no code needed, which is also why the system prompt wasn't
-   aggressively shrunk when asked to optimize; dropping it under
-   ~1024 tokens would forfeit that automatic discount.
-4. **Soft review is opt-out and only runs once, on success.** One
+   ~1000-token prefix. Azure OpenAI documents automatic caching on
+   repeated >=1024-token prefixes, no code required — but I haven't
+   independently verified this applies identically for a reasoning-
+   model deployment like `gpt-5-mini` on API version `2025-01-01`
+   specifically, so treat `usage.cache_read_input_tokens` in your
+   actual run output as the real answer, not this doc.
+4. **Reasoning effort, for reasoning-model deployments specifically.**
+   `gpt-5-mini` (and similar) spend hidden "reasoning tokens" before
+   writing visible output — these count as real output cost but never
+   appear as content. `llm_client.py` sets `reasoning_effort="low"` for
+   any deployment it detects as a reasoning model, since writing a
+   templated HTML draft doesn't need deep deliberation. Watch
+   `usage.reasoning_tokens` in your actual output — if it's a large
+   fraction of `output_tokens`, that's tokens spent thinking, not
+   writing.
+5. **Soft review is opt-out and only runs once, on success.** One
    extra call maximum per run, never spent on a draft that isn't
    structurally complete yet.
 
-`LLMClient.last_usage` exposes real token/cache counts after every
-call (`input_tokens`, `output_tokens`, and on Anthropic,
-`cache_read_input_tokens` / `cache_creation_input_tokens`) — both
-`app.py` and `pipeline.py`'s CLI smoke test print these so you can see
-the discount happening, not just take it on faith.
+`LLMClient.last_usage` exposes real token counts after every call
+(`input_tokens`, `output_tokens`, and `cache_read_input_tokens` /
+`reasoning_tokens` when Azure returns them) — both `app.py` and
+`pipeline.py`'s CLI smoke test print these so you can see the actual
+numbers, not just take a description of them on faith.
+
+## No fallback mechanisms
+
+Two deliberate constraints, added after hitting real integration
+issues while testing this against an actual Azure key:
+
+1. **One provider, no alternates.** `llm_client.py` supports Azure
+   OpenAI only. An earlier version tried an Azure AI Foundry endpoint
+   style and then Anthropic as fallbacks if the primary path wasn't
+   configured — that's gone. There's exactly one credential this
+   project actually uses, so there's exactly one code path. Missing
+   credentials raise immediately, with a message telling you exactly
+   what env vars are missing.
+2. **No exception-swallowing that produces a placeholder result.**
+   `regulatory.py`'s LLM-fallback resolvers and `soft_review.py` used
+   to catch API failures and return a fake "resolution failed" /
+   "review unavailable" result that looked like a normal, valid
+   outcome. All of that is gone — a failed API call, malformed JSON
+   response, or corrupted/unwritable cache file now raises a real
+   exception instead. If something breaks, you'll see a real
+   traceback, not a checkmark that quietly means something different
+   than it looks like it means.
+
+**What's intentionally NOT covered by this, because it's a different
+thing:** an unrecognized market/audience with `client=None` (no LLM
+call attempted at all), or a successful LLM response that says "I'm
+not confident," still resolves to an honest `known=False` state
+without raising. That's not a failure being hidden — it's a real,
+valid answer ("I don't know" is a legitimate resolution outcome). Only
+an actual broken call now raises; a successful call that's honestly
+uncertain still degrades gracefully, on purpose.
+
+**One necessary exception:** `live-loop-demo.html` (the standalone
+browser demo) still calls the Anthropic API, because that's a platform
+constraint of the artifact environment it runs in, not a choice made
+in this codebase — it's not part of the Python pipeline you're
+actually running, and doesn't touch your Azure credentials at all.
+Everything under `pip install -r requirements.txt` / `python
+pipeline_langgraph.py` / `streamlit run app.py` is 100% Azure-only.
 
 ## Setup
 
 ```bash
 pip install -r requirements.txt
 
-# Azure AI Foundry (matches your existing GPT-4o-mini deployment):
-export AZURE_AI_FOUNDRY_ENDPOINT="https://<resource>.services.ai.azure.com/models"
-export AZURE_AI_FOUNDRY_API_KEY="..."
-export AZURE_AI_FOUNDRY_DEPLOYMENT="gpt-4o-mini"
-
-# — or — Anthropic instead:
-export ANTHROPIC_API_KEY="..."
+export AZURE_OPENAI_API_KEY="..."
+export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
+export AZURE_OPENAI_API_VERSION="2025-01-01"
+export AZURE_OPENAI_DEPLOYMENT="gpt-5-mini"
 ```
+
+This is Azure-only, on purpose — no fallback to another provider if
+these aren't set, and `llm_client.py` will raise immediately rather
+than silently trying something else. See "No fallback mechanisms"
+below for the full reasoning.
+
+**Note on `gpt-5-mini` specifically:** it's a reasoning model, which needs
+different API parameters than a plain chat model (`max_completion_tokens`
+instead of `max_tokens`, no custom `temperature`, plus a `reasoning_effort`
+setting). `llm_client.py` detects this automatically from the deployment
+name and switches parameters accordingly — you don't need to configure
+anything extra for this, but if you ever rename the deployment to
+something that doesn't obviously contain "gpt-5", check
+`_is_reasoning_model()` in `llm_client.py`.
 
 ## Run it
 
@@ -182,7 +240,7 @@ python analyze_traces.py
 | `brand_config.py` | Per-brand color tokens + AE reporting line + PI placeholder (placeholders, not real brand-guideline values) |
 | `regulatory.py` | Free-text market/audience resolution: dictionary → disk cache → LLM fallback |
 | `prompts/generator_system.md` | The Generator's system prompt — market-agnostic on purpose, see Token cost strategy above |
-| `llm_client.py` | Provider-agnostic LLM wrapper (Azure AI Foundry / Anthropic), with prompt caching |
+| `llm_client.py` | Azure OpenAI client only — no fallback provider, no exception-swallowing, handles reasoning-model params |
 | `generator.py` | Brief → HTML, plus revision mode |
 | `grader.py` | 11 deterministic structural rules + `GradingContext`, `BeautifulSoup`-based |
 | `soft_review.py` | Optional 1-call LLM advisory pass for subjective concerns, never blocking |
@@ -194,7 +252,8 @@ python analyze_traces.py
 ## Validated against your uploaded templates
 
 I ran `grader.py` against `DOVATO-UK-EMAIL-2026-004` as a sanity check
-before handing this over: 8 of 9 rules passed cleanly, including
+early on (back when the grader had 9 rules, before `black_triangle`
+and `boxed_warning` were added): 8 of 9 passed cleanly, including
 correctly detecting that the file is unbranded (product name only
 appears in the internal annotation footer, never the visible body) and
 correctly finding the ABPI reference and HCP-only line. The one

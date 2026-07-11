@@ -226,41 +226,47 @@ function tickElapsed(){
 }
 
 function buildSystemPrompt(brief, tokens, aeLine){
-  return `You are a pharma marketing DRAFT generator. Produce ONE compact, single-column HTML
-email body (not a split desktop/mobile mockup — keep total output well under 500 words of
-visible copy since you have a small output budget). Return ONLY raw HTML, no markdown fences,
-no preamble.
+  return `You are a pharma marketing DRAFT generator working under a HARD 1000-token output cap.
+If you run out of room, whatever you haven't written yet gets silently cut off — so you MUST
+write in the exact order below, most important first, so a cutoff only ever loses low-priority
+decoration, never a required compliance element. Return ONLY raw HTML, no markdown fences, no
+preamble, no explanation before or after the HTML.
 
-Hard requirements the output WILL be mechanically checked against:
-1. Include the exact text "DRAFT" and "Not approved for distribution" visibly in the footer.
-2. Include the exact text "[CL ID — PENDING]" in the footer.
-3. If audience is HCP-like: include an explicit line stating this is for the specified market's
-   healthcare professionals only (must contain the words "healthcare professional" and a
-   recognizable form of the market name given in the user message).
-4. Include a <div> with an inline style containing "border: 2px solid" wrapping the adverse
-   event text. Inside it, use the AE reporting line given in the user message VERBATIM.
-5. If classification is "unbranded": the product/brand name must NEVER appear in the visible
-   body copy. You may name the sponsor COMPANY (not the product), e.g. "Supported by [company]".
-   If classification is "branded": you may use the product name, and you MUST include the
-   exact phrase "Prescribing Information" as a placeholder link (href="#").
-6. The user message includes a "Market-specific compliance notes" section with the applicable
-   regulatory code for THAT brief's market and any market-specific requirements (e.g. EU/UK
-   black-triangle status, US Boxed Warning). Include the stated code in the footer. Never
-   assume a single fixed code — it's supplied per call, not fixed here.
-7. All links must use href="#" — never invent a real URL.
-8. Do not include an <img> tag for any logo — use a text placeholder like
-   "[LOGO PLACEHOLDER — brand name]" instead.
-9. Do not state any specific statistic, percentage, or trial result as settled fact — mark any
-   such reference clearly as "[PENDING VERIFICATION]".
-10. Market-specific structural elements: if the compliance notes mention a black-triangle /
-    additional-monitoring requirement, render the ▼ symbol plus "This medicine is subject to
-    additional monitoring" near the headline. If they mention a possible Boxed Warning, render
-    a clearly-labeled "[BOXED WARNING — CONFIRM WITH REGULATORY IF APPLICABLE]" block near the
-    AE box. Never assert either one definitely applies or doesn't — render the placeholder, not
-    a confident claim.
+WRITE IN THIS EXACT ORDER — do not write body copy or styling before every item in Part A exists:
 
-Wrap the whole thing in a div with class="email-content". Put footer/annotation notes in a
-nested div with class="annotation-wrap" so it's excluded from "visible body copy" checks.`;
+PART A — compliance-critical, write this FIRST, keep it terse (plain text, minimal markup):
+1. A single top div containing, on separate short lines: the exact text "DRAFT" and "Not
+   approved for distribution"; the exact text "[CL ID — PENDING]"; and the regulatory code named
+   in the user message's compliance notes (e.g. "ABPI" or "FDA").
+2. If the user message's compliance notes mention a black-triangle/additional-monitoring or
+   Boxed Warning requirement, one short line for it here (▼ symbol + "subject to additional
+   monitoring", or "[BOXED WARNING — CONFIRM WITH REGULATORY IF APPLICABLE]"). Skip entirely if
+   the notes don't mention it — don't invent one for a market that doesn't need it.
+3. If audience is HCP-like: one line stating this is for the given market's healthcare
+   professionals only (must contain the words "healthcare professional" and a recognizable form
+   of the market name).
+4. The AE box: a <div style="border: 2px solid #999; padding:6px;"> containing the AE reporting
+   line from the user message VERBATIM, nothing paraphrased.
+5. If classification is "branded": the exact phrase "Prescribing Information" as a placeholder
+   link (href="#").
+
+PART B — write this only after every Part A item is done, and keep it SHORT (aim for under 60
+words total, one short headline + 2-3 sentences of body copy, one CTA link href="#"):
+6. A short headline + short body paragraph about the objective. If unbranded, never name the
+   product — you may name the sponsor company once (e.g. "Supported by [company]"). If branded,
+   you may use the product name freely here.
+   Any specific statistic/trial result must be marked "[PENDING VERIFICATION]", never stated as
+   settled fact.
+7. One placeholder CTA link, href="#".
+8. A text logo placeholder like "[LOGO PLACEHOLDER — brand name]" — never an <img> tag.
+
+STYLE BUDGET — you have almost no room for decoration. Use at most: one border (the AE box,
+already specified above) and one color reference using the accent color given in the user
+message. No gradients, no box-shadows, no multiple fonts, no repeated inline styling per
+element. Plain text and simple <div>/<p> tags for everything else.
+
+Wrap everything in one outer <div class="email-content">. Nothing needs a separate
+class="annotation-wrap" section in this compact mode — Part A already carries every check.`;
 }
 function buildUserPrompt(brief, tokens, aeLine){
   return `Brief:
@@ -278,9 +284,25 @@ AE reporting line to embed verbatim: "${aeLine}"
 
 Return only the HTML.`;
 }
-function buildRevisionPrompt(previousHtml, failedItems, aeLine){
+function buildRevisionPrompt(previousHtml, failedItems, aeLine, wasTruncated){
   const list = failedItems.map(i => `- [${i.rule_id}] ${RULE_LABELS[i.rule_id]}: ${i.detail}`).join('\n');
-  return `The previous draft FAILED these checks:\n${list}\n\nPREVIOUS DRAFT:\n${previousHtml}\n\n` +
+  if(wasTruncated){
+    // The previous attempt hit the 1000-token cap before finishing — it's incomplete, possibly
+    // mid-tag. Asking the model to "patch" broken/truncated HTML just reproduces the same
+    // length problem and hits the same wall again. Don't send it back at all: start clean,
+    // and lean harder on the ordering instruction that caused the problem in the first place.
+    return `Your previous attempt was CUT OFF by the 1000-token output limit before finishing —` +
+      ` it never got past this content:\n\n${previousHtml.slice(0, 400)}...\n[TRUNCATED]\n\n` +
+      `That's why these checks failed (they're written LATE in your priority order, past where ` +
+      `you ran out of room):\n${list}\n\n` +
+      `Do NOT try to continue or complete that draft. Start over. Write Part A (the compliance ` +
+      `block) FIRST and keep it terse — that's what got cut off last time. Keep Part B (headline ` +
+      `+ body copy) to well under 40 words this time, shorter than the system prompt's own ` +
+      `suggestion, specifically to guarantee everything fits. ` +
+      `AE line verbatim: "${aeLine}"\nReturn only the HTML.`;
+  }
+  return `The previous draft finished within budget but FAILED these checks:\n${list}\n\n` +
+    `PREVIOUS DRAFT:\n${previousHtml}\n\n` +
     `Patch ONLY what's needed to fix the failed checks above — keep everything else unchanged.\n` +
     `Reminder — AE line to embed verbatim: "${aeLine}"\nReturn only the corrected full HTML.`;
 }
@@ -480,6 +502,7 @@ async function runLoop(){
     let t0 = Date.now();
     let res = await callClaude(system, userPrompt);
     log(`✓ Response in ${((Date.now()-t0)/1000).toFixed(1)}s — ${res.usage.input_tokens} in / ${res.usage.output_tokens} out tokens${cacheNote(res.usage)}, stop_reason: ${res.stop_reason}`, 'pass');
+    if(res.stop_reason === 'max_tokens') log(`⚠ Output was CUT OFF at the 1000-token cap — anything after this point in the model's response never arrived.`, 'warn');
     let html = extractHtml(res.text);
     let lastUsage = res.usage, lastPrompt = { system, user: userPrompt };
     iterCount = 1;
@@ -491,16 +514,30 @@ async function runLoop(){
     results.forEach(r => log(`&nbsp;&nbsp;${r.passed?'✓':(r.severity==='warning'?'⚠':'✗')} [${r.rule_id}] ${RULE_LABELS[r.rule_id]} — ${r.detail}`, r.passed?'pass':(r.severity==='warning'?'warn':'fail')));
     setStep('grade1','done');
 
+    let prevFailedIds = null;
     while(!results.every(r=>r.passed) && iterCount < 3){
       const blockingFailed = results.filter(r=>!r.passed && r.severity==='blocking');
       if(blockingFailed.length === 0){ log('→ Only non-blocking warnings remain — not worth burning another revision call.', 'info'); break; }
+
+      // Stuck detector: if the exact same rules failed last iteration too, another identical
+      // attempt is very unlikely to fix it and just burns tokens repeating the same mistake —
+      // stop and say so plainly instead of silently retrying a 3rd time.
+      const currentFailedIds = blockingFailed.map(r=>r.rule_id).sort().join(',');
+      if(prevFailedIds !== null && currentFailedIds === prevFailedIds){
+        log(`→ Same ${blockingFailed.length} check(s) failed two attempts in a row (${currentFailedIds}) — stopping instead of burning a 3rd identical call. This usually means the system prompt needs a fix, not another retry.`, 'warn');
+        break;
+      }
+      prevFailedIds = currentFailedIds;
+
       setStep('revise','active');
       iterCount++;
-      log(`→ [Step 4] ${blockingFailed.length} blocking check(s) failed — calling generator again (attempt ${iterCount}) with only those specific failures…`, 'info');
-      const revisionPrompt = buildRevisionPrompt(html, blockingFailed, aeLine);
+      const wasTruncated = res.stop_reason === 'max_tokens';
+      log(`→ [Step 4] ${blockingFailed.length} blocking check(s) failed — calling generator again (attempt ${iterCount}), ${wasTruncated ? 'restarting fresh since the last attempt was truncated' : 'patching only the specific failures'}…`, 'info');
+      const revisionPrompt = buildRevisionPrompt(html, blockingFailed, aeLine, wasTruncated);
       t0 = Date.now();
       res = await callClaude(system, revisionPrompt);
       log(`✓ Revision in ${((Date.now()-t0)/1000).toFixed(1)}s — ${res.usage.input_tokens} in / ${res.usage.output_tokens} out tokens${cacheNote(res.usage)}`, 'pass');
+      if(res.stop_reason === 'max_tokens') log(`⚠ Revision was ALSO cut off at the 1000-token cap.`, 'warn');
       html = extractHtml(res.text);
       lastUsage = res.usage; lastPrompt = { system, user: revisionPrompt };
       log(`→ Re-grading…`, 'info');

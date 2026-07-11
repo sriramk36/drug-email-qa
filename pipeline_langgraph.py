@@ -171,6 +171,13 @@ if __name__ == "__main__":
         print("\nSoft review (advisory, not verified):")
         for n in final_state["soft_review_notes"]:
             print(f"  - {n.concern}: {n.detail}")
+    if client.last_usage:
+        u = client.last_usage
+        print(f"\nFinal call usage: {u.get('input_tokens')} in / {u.get('output_tokens')} out tokens")
+        if u.get("cache_read_input_tokens"):
+            print(f"  cache read: {u['cache_read_input_tokens']} tokens (cheaper — exact discount depends on Azure's own pricing)")
+        if u.get("reasoning_tokens"):
+            print(f"  reasoning tokens: {u['reasoning_tokens']} (hidden thinking, not visible output)")
     with open("last_run_langgraph.html", "w") as f:
         f.write(final_state["html"])
     print("\nWrote last_run_langgraph.html")

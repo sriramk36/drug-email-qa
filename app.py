@@ -103,11 +103,12 @@ if submitted:
 
         elif node_name == "generate":
             usage = client.last_usage or {}
-            cache_note = ""
+            notes = []
             if usage.get("cache_read_input_tokens"):
-                cache_note = f" — cache HIT: {usage['cache_read_input_tokens']} tokens at ~10% cost"
-            elif usage.get("cache_creation_input_tokens"):
-                cache_note = f" — cache WRITE: {usage['cache_creation_input_tokens']} tokens (1.25x, once)"
+                notes.append(f"cache hit: {usage['cache_read_input_tokens']} tokens (cheaper, exact discount per Azure's pricing)")
+            if usage.get("reasoning_tokens"):
+                notes.append(f"reasoning tokens: {usage['reasoning_tokens']} (hidden thinking, not visible output)")
+            cache_note = f" — {', '.join(notes)}" if notes else ""
             kind = "generated" if update["iteration"] == 1 else "revised"
             ui_log(f"→ [generate] draft {kind} (attempt {update['iteration']}) — "
                    f"{usage.get('input_tokens','?')} in / {usage.get('output_tokens','?')} out tokens{cache_note}")

@@ -52,6 +52,10 @@ def soft_review(html: str, brief: CampaignBrief, client: Any) -> list[SoftReview
     One LLM call. Callers (pipeline.py) are responsible for only invoking
     this after GradeReport.all_passed is True, so it's never spent on a
     draft that's not even structurally finished yet.
+
+    No try/except around the API call or JSON parsing — a failure here
+    should surface as a real, visible exception, not silently degrade
+    into a fake "unavailable" note that looks like a normal result.
     """
     user = f"""Brief context: {brief.market} market, {brief.audience} audience, \
 {brief.classification.value} classification, objective: "{brief.objective}"
@@ -59,24 +63,13 @@ def soft_review(html: str, brief: CampaignBrief, client: Any) -> list[SoftReview
 DRAFT HTML:
 {html}
 """
-    try:
-        raw = client.complete(system=_SOFT_REVIEW_SYSTEM, user=user, max_tokens=500)
-        text = raw.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()[1:]
-            if lines and lines[-1].strip().startswith("```"):
-                lines = lines[:-1]
-            text = "\n".join(lines)
-        items = json.loads(text)
-        return [SoftReviewNote(concern=i.get("concern", "Untitled concern"), detail=i.get("detail", ""))
-                for i in items]
-    except Exception as e:
-        # A failed soft review should never fail the pipeline — it's advisory on top of
-        # an already-passing draft, not a required gate.
-        return [SoftReviewNote(
-            concern="Soft review unavailable",
-            detail=f"The advisory LLM pass failed ({type(e).__name__}) — this draft passed all "
-                   f"deterministic checks, but wasn't reviewed for subjective concerns. Consider "
-                   f"a closer manual read before this goes further.",
-            severity="advisory",
-        )]
+    raw = client.complete(system=_SOFT_REVIEW_SYSTEM, user=user, max_tokens=500)
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    items = json.loads(text)
+    return [SoftReviewNote(concern=i.get("concern", "Untitled concern"), detail=i.get("detail", ""))
+            for i in items]

@@ -83,7 +83,7 @@ modes are repetitive and enumerable.
 |---|---|
 | FR-1 | System accepts a brief with: channel, email type (if channel=email), market (free text), audience (free text), brand (free text), objective (free text), classification (branded/unbranded). |
 | FR-2 | System generates a single HTML draft from the brief via an LLM call, using brand-specific visual/compliance tokens where the brand is recognized, and explicit `[TBC]` placeholder tokens where it isn't. |
-| FR-3 | System grades the draft against 9 structural rules (§8) and returns a pass/fail/warning + human-readable explanation per rule. |
+| FR-3 | System grades the draft against 11 structural rules (§8) and returns a pass/fail/warning + human-readable explanation per rule. |
 | FR-4 | On any blocking rule failure, system sends the specific failing rules (not the whole rule set) back to the generator with the previous draft, requesting a targeted patch, and re-grades. |
 | FR-5 | Revision loop is bounded (default: 3 total attempts) and halts early once only non-blocking warnings remain. |
 | FR-6 | System resolves free-text market input against a known-alias map (UK/US/EU/Swiss + common synonyms) using word-boundary matching; unrecognized markets degrade the relevant rule to a non-blocking warning rather than a silent pass or unfair hard fail. |
@@ -99,24 +99,34 @@ modes are repetitive and enumerable.
   LangGraph/DeepAgents) — the orchestration is a plain bounded loop,
   intentionally, so every step is inspectable and explainable without
   reference to a third-party runtime's internals.
-- **Determinism where it matters.** All 9 blocking/warning rules are
+- **Determinism where it matters.** All 11 blocking/warning rules are
   regex/DOM-based, not a second LLM call — grading must be
   reproducible and auditable, not a matter of an LLM's judgment on a
   given day.
-- **Provider portability.** LLM calls go through one thin client
-  (`llm_client.py`); switching between Azure AI Foundry and Anthropic
-  is an environment-variable change, not a code change.
-- **Graceful degradation on unknown input.** An unrecognized brand or
-  market must never crash or silently misreport — it degrades to an
-  explicit placeholder/warning state.
+- **Single provider, no silent fallback.** `llm_client.py` supports
+  Azure OpenAI only — no alternate provider, no "try something else if
+  this isn't configured." Missing credentials or a failed API call
+  raise immediately rather than degrading to a placeholder result.
+  This was a deliberate choice, not a limitation: a fallback that
+  silently switches providers (or worse, silently returns fake
+  content) turns a real failure into something that looks like a
+  normal result, which is worse than the pipeline just stopping.
+- **Honest uncertainty is not the same as error-swallowing.** An
+  unrecognized market/audience with no `client` passed in, or an LLM
+  response that says "I'm not confident," still resolves to an honest
+  `known=False` state rather than crashing — that's a legitimate
+  answer, not a failure. A failed API call or malformed response,
+  by contrast, raises. The distinction matters: one is "the input is
+  genuinely ambiguous," the other is "something broke," and only the
+  first should ever look like a normal outcome.
 - **Token cost discipline.** The system prompt is kept market-agnostic
-  specifically so it's one stable, cacheable prefix (explicit
-  Anthropic `cache_control`, automatic on Azure/OpenAI-compatible
-  endpoints) reused across every call rather than resent fresh each
-  time. Market-specific guidance is front-loaded into the first
-  generation call to reduce revision-loop iterations, since an extra
-  iteration costs a full extra input+output round trip, not just a
-  few tokens.
+  specifically so it's one stable prefix reused across every call
+  rather than resent fresh each time. Azure documents automatic
+  caching on repeated prompts, though this hasn't been independently
+  verified for a reasoning-model deployment specifically. Market-
+  specific guidance is front-loaded into the first generation call to
+  reduce revision-loop iterations, since an extra iteration costs a
+  full extra input+output round trip, not just a few tokens.
 
 ## 8. Compliance rule specification (the Grader)
 
@@ -157,7 +167,7 @@ CampaignBrief ──▶ generator.py ──▶ HTML draft ──▶ grader.py �
 - `brand_config.py` — per-brand visual + AE-line tokens, with a
   placeholder default for unknown brands
 - `regulatory.py` — free-text market/audience resolution
-- `llm_client.py` — provider-agnostic LLM call wrapper
+- `llm_client.py` — Azure OpenAI client, no fallback provider
 - `generator.py` — Loop 1 (generate/revise)
 - `grader.py` — Loop 2 (9 deterministic rules)
 - `pipeline.py` — orchestration + circuit breaker
@@ -173,7 +183,7 @@ CampaignBrief ──▶ generator.py ──▶ HTML draft ──▶ grader.py �
   via `analyze_traces.py`) — the metric to watch as you iterate on
   `prompts/generator_system.md`.
 - **Average iterations to pass**, when it does pass.
-- **Rule-level failure frequency** — which of the 9 rules the
+- **Rule-level failure frequency** — which of the 11 rules the
   generator struggles with most, used to prioritize prompt fixes.
 - Qualitative: can a reviewer unfamiliar with the code understand
   *why* a given draft passed or failed from the audit trail alone,
@@ -189,6 +199,8 @@ CampaignBrief ──▶ generator.py ──▶ HTML draft ──▶ grader.py �
 | Free-text market/audience causing false positives/negatives | Word-boundary matching (not substring) after catching a real "us" ⊂ "focuses" bug during testing; unrecognized values degrade to warnings, not silent passes |
 | Real brand names/colors used in a demo escaping context | DRAFT watermark, placeholder logos (never real image assets embedded), placeholder CTAs, no synthesized real destination URLs |
 | Revision loop running away / burning API cost on an unfixable brief | `MAX_ITERATIONS = 3` circuit breaker; early exit once only non-blocking warnings remain |
+| A failed API call silently producing a placeholder result that looks like a normal outcome | Removed entirely — `llm_client.py`, `regulatory.py`'s LLM resolvers, and `soft_review.py` all raise on failure now instead of catching and returning a fake result; see CODE_WALKTHROUGH.md §15 |
+| Misconfigured credentials silently running on a different/unintended provider | Single provider only (Azure OpenAI) — no fallback chain that could mask a config error by quietly using something else |
 
 ## 12. Open questions / future work
 
