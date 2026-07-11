@@ -1,8 +1,8 @@
 import pytest
 from bs4 import BeautifulSoup
-from schema import CampaignBrief, ContentClassification
+from core.schema import CampaignBrief, ContentClassification
 
-from grader import (
+from pipeline.grader import (
     rule_draft_watermark,
     rule_job_code_pending,
     rule_hcp_audience_tag,
@@ -11,7 +11,7 @@ from grader import (
     rule_pi_link_if_branded,
     rule_regulatory_footer_tag,
     rule_no_hardcoded_cta_url,
-    rule_logo_not_embedded
+    rule_uploaded_images_used
 )
 
 @pytest.fixture
@@ -28,12 +28,19 @@ def base_brief():
 
 @pytest.fixture
 def branded_brief(base_brief):
-    b = base_brief.copy(update={"classification": ContentClassification.BRANDED})
+    b = base_brief.model_copy(update={"classification": ContentClassification.BRANDED})
     return b
 
 def run_rule(rule_func, raw_html: str, brief: CampaignBrief, tokens: dict = None):
+    from pipeline.grader import GradingContext
+    from core.regulatory import MarketInfo, AudienceInfo
+    ctx = GradingContext(
+        tokens=tokens or {},
+        market_info=MarketInfo(market_text="UK", body_name="ABPI", tags=["ABPI"], known=True, aliases=["uk", "united kingdom"], source="dictionary"),
+        audience_info=AudienceInfo(audience_text="HCP", source="dictionary", known=True, is_hcp=True)
+    )
     soup = BeautifulSoup(raw_html, "html.parser")
-    return rule_func(soup, raw_html, brief, tokens or {})
+    return rule_func(soup, raw_html, brief, ctx)
 
 def test_rule_draft_watermark(base_brief):
     # Pass
@@ -138,13 +145,18 @@ def test_rule_no_hardcoded_cta_url(base_brief):
     item = run_rule(rule_no_hardcoded_cta_url, html_fail, base_brief)
     assert not item.passed
 
-def test_rule_logo_not_embedded(base_brief):
-    # Pass
-    html_pass = "<img src='placeholder' class='logo' />"
-    item = run_rule(rule_logo_not_embedded, html_pass, base_brief)
+def test_rule_uploaded_images_used(base_brief):
+    # Pass (no images)
+    item = run_rule(rule_uploaded_images_used, "<html></html>", base_brief)
     assert item.passed
 
-    # Fail
-    html_fail = "<img src='https://assets.com/logo.png' class='logo' />"
-    item = run_rule(rule_logo_not_embedded, html_fail, base_brief)
+    # Pass (images used)
+    base_brief.uploaded_images = {"logo.png": "data"}
+    html_pass = "<img src='uploaded:logo.png' />"
+    item = run_rule(rule_uploaded_images_used, html_pass, base_brief)
+    assert item.passed
+
+    # Fail (images not used)
+    html_fail = "<html></html>"
+    item = run_rule(rule_uploaded_images_used, html_fail, base_brief)
     assert not item.passed

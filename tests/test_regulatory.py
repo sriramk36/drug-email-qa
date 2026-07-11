@@ -1,8 +1,9 @@
 import pytest
 from bs4 import BeautifulSoup
-from schema import CampaignBrief, ContentClassification
+from core.schema import CampaignBrief, ContentClassification
 
-from grader import rule_hcp_audience_tag, rule_regulatory_footer_tag
+from pipeline.grader import rule_hcp_audience_tag, rule_regulatory_footer_tag, GradingContext
+from core.regulatory import MarketInfo, AudienceInfo
 
 def test_word_boundary_regression():
     # Market="US" should NOT be satisfied by body text containing "focuses" or "discusses"
@@ -21,13 +22,18 @@ def test_word_boundary_regression():
     html_fail = "<div>This focuses on healthcare professional insights and discusses outcomes.</div>"
     soup = BeautifulSoup(html_fail, "html.parser")
     
-    item = rule_hcp_audience_tag(soup, html_fail, brief, {})
+    ctx = GradingContext(
+        tokens={},
+        market_info=MarketInfo(market_text="US", body_name="FDA", tags=["FDA"], known=True, aliases=["us", "united states"], source="dictionary"),
+        audience_info=AudienceInfo(audience_text="HCP", source="dictionary", known=True, is_hcp=True)
+    )
+    item = rule_hcp_audience_tag(soup, html_fail, brief, ctx)
     assert not item.passed, "Word boundary check failed, incorrectly matched 'us' inside 'focuses' or 'discusses'."
 
     # Correct case
     html_pass = "<div>This US healthcare professional site is for HCPs.</div>"
     soup_pass = BeautifulSoup(html_pass, "html.parser")
-    item_pass = rule_hcp_audience_tag(soup_pass, html_pass, brief, {})
+    item_pass = rule_hcp_audience_tag(soup_pass, html_pass, brief, ctx)
     assert item_pass.passed
 
 def test_unrecognized_market_narnia():
@@ -44,7 +50,12 @@ def test_unrecognized_market_narnia():
     html = "<footer>Some footer text.</footer>"
     soup = BeautifulSoup(html, "html.parser")
 
-    item = rule_regulatory_footer_tag(soup, html, brief, {})
+    ctx2 = GradingContext(
+        tokens={},
+        market_info=MarketInfo(market_text="Narnia", body_name="Unknown", tags=[], known=False, aliases=[], source="llm"),
+        audience_info=AudienceInfo(audience_text="HCP", source="dictionary", known=True, is_hcp=True)
+    )
+    item = rule_regulatory_footer_tag(soup, html, brief, ctx2)
     
     assert not item.passed
     assert item.severity == "warning", "Unrecognized market must produce a warning severity, not blocking."

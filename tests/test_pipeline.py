@@ -1,18 +1,18 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from schema import CampaignBrief, ContentClassification, GradeReport, GradeItem
+from core.schema import CampaignBrief, ContentClassification, GradeReport, GradeItem
 
-from pipeline import run_pipeline
+from pipeline.pipeline import run_pipeline
 
 class FakeLLMClient:
     def __init__(self):
         self.provider = "fake"
         self.last_usage = {"input_tokens": 100, "output_tokens": 50}
 
-    def complete(self, messages, max_tokens=1000):
+    def complete(self, *args, **kwargs):
         # We don't actually use complete directly in our mock because we'll patch generator functions.
         # But we mock it just in case.
-        return "<html>Fake HTML</html>", self.last_usage
+        return "<html>Fake HTML</html>"
 
 @pytest.fixture
 def base_brief():
@@ -26,10 +26,12 @@ def base_brief():
         classification=ContentClassification.UNBRANDED_DISEASE_AWARENESS
     )
 
-@patch('pipeline.generate')
-@patch('pipeline.grade')
-@patch('pipeline.revise')
-def test_pipeline_revision_loop_passes_only_failed_items(mock_revise, mock_grade, mock_generate, base_brief):
+@patch('pipeline.pipeline.generate')
+@patch('pipeline.pipeline.grade')
+@patch('pipeline.pipeline.revise')
+@patch('pipeline.pipeline.soft_review')
+def test_pipeline_revision_loop_passes_only_failed_items(mock_soft_review, mock_revise, mock_grade, mock_generate, base_brief):
+    mock_soft_review.return_value = []
     mock_client = FakeLLMClient()
     
     mock_generate.return_value = "<html>Initial Draft</html>"
