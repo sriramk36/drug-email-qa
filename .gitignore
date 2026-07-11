@@ -21,3 +21,7 @@ uploads/
 
 # Logs
 *.log
+
+# Outputs
+outputs/
+
