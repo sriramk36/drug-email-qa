@@ -7,12 +7,31 @@ visibility is what LangGraph gives you for free versus the plain
 version, and this file is where that actually gets used, not just
 demonstrated in a CLI print statement.
 
+--- Changes in this revision ---
+1. Draft preview now inline-highlights any quoted phrase referenced by a
+   failed/warned audit item, so reviewers see the offending copy in
+   context instead of only in the side panel.
+2. Audit results are grouped into Blocking Failures / Warnings / Passed
+   expanders (with counts) instead of one flat list.
+3. An "Iteration History" strip shows pass/fail/warn deltas across
+   retries, so it's clear *why* the pipeline looped.
+4. Every run now persists a small JSON sidecar next to its HTML output.
+   A "Recent Drafts" section reads these back into a history table
+   (ID, channel, market, audience, objective, compliance score, status,
+   iterations, created at) that's visible even before you generate a
+   new draft.
+
 Run with: streamlit run app.py
 """
 
 import time
 import base64
+import json
+import re
+from datetime import datetime
+from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -237,7 +256,7 @@ st.markdown("""
 
     /* Primary Submit Button */
     [data-testid="stFormSubmitButton"] > button {
-        background: var(--gradient-main) !important;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
         color: white !important;
         border: none !important;
         font-weight: 700 !important;
@@ -307,6 +326,16 @@ st.markdown("""
     .stProgress > div > div > div > div {
         background: var(--gradient-main);
     }
+
+    /* ═══════════════════════════════════════════════
+       Recent Drafts history table
+       ═══════════════════════════════════════════════ */
+    .history-heading {
+        font-weight: 700;
+        font-size: 1.05rem;
+        margin: 1.5rem 0 0.5rem 0;
+        color: var(--text-primary);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -322,6 +351,97 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
+
+# --- Helper functions (history + inline highlighting) ---
+
+def highlight_flagged_claims(html: str, report) -> str:
+    """Wrap any quoted phrase referenced in a failed/warned audit item's
+    detail text in a <mark> tag, so the offending copy is visible directly
+    inside the draft preview instead of only in the side audit panel.
+
+    components.html() renders in its own sandboxed iframe, so the styling
+    for the <mark> tags has to be injected into this HTML string itself —
+    the app's main <style> block above won't reach inside that iframe.
+    """
+    highlighted = html
+    for item in report.items:
+        if item.passed:
+            continue
+        css_class = "mlr-flag-fail" if item.severity == Severity.BLOCKING else "mlr-flag-warn"
+        quotes = re.findall(r'"([^"\n]{3,80})"', item.detail or "")
+        for q in quotes:
+            if q and q in highlighted:
+                highlighted = highlighted.replace(
+                    q, f'<mark class="{css_class}" title="{item.label}">{q}</mark>', 1
+                )
+    style_snippet = """
+    <style>
+    mark.mlr-flag-fail{background:rgba(244,63,94,0.25);color:#f43f5e;padding:0 2px;border-radius:3px;border-bottom:2px solid #f43f5e;}
+    mark.mlr-flag-warn{background:rgba(245,158,11,0.25);color:#f59e0b;padding:0 2px;border-radius:3px;border-bottom:2px solid #f59e0b;}
+    </style>
+    """
+    return style_snippet + highlighted
+
+
+def save_draft_metadata(brief, report, iteration, elapsed, output_filename, passed, failed, warned, total):
+    """Persist a small JSON sidecar next to each generated draft so the
+    'Recent Drafts' section below can list history across sessions,
+    instead of only showing the single most recent run."""
+    out_dir = Path("outputs")
+    out_dir.mkdir(exist_ok=True)
+    existing = list(out_dir.glob("*.json"))
+    draft_id = f"#{1200 + len(existing) + 1}"
+    meta = {
+        "id": draft_id,
+        "channel": brief.channel,
+        "type": brief.email_type or "-",
+        "market": brief.market,
+        "audience": brief.audience,
+        "brand": brief.brand,
+        "objective": brief.objective,
+        "classification": brief.classification,
+        "status": "Draft" if report.all_passed else "Blocked",
+        "compliance": f"{passed}/{total}",
+        "iterations": iteration,
+        "time_taken": f"{elapsed:.1f}s",
+        "created_at": datetime.now().strftime("%b %d, %Y %I:%M %p"),
+        "html_file": output_filename,
+    }
+    meta_path = out_dir / f"{Path(output_filename).stem}.json"
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return meta
+
+
+def load_draft_history():
+    out_dir = Path("outputs")
+    if not out_dir.exists():
+        return []
+    records = []
+    for jf in sorted(out_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            records.append(json.loads(jf.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+    return records
+
+
+def render_recent_drafts():
+    st.markdown('<div class="history-heading">📋 Recent Drafts</div>', unsafe_allow_html=True)
+    records = load_draft_history()
+    if not records:
+        st.caption("No drafts generated yet — your history will appear here after your first run.")
+        return
+    df = pd.DataFrame(records)
+    df = df.rename(columns={
+        "id": "ID", "channel": "Channel", "type": "Type", "market": "Market",
+        "audience": "Audience", "objective": "Objective", "compliance": "Compliance",
+        "status": "Status", "iterations": "Iterations", "created_at": "Created At",
+    })
+    display_cols = ["ID", "Channel", "Type", "Market", "Audience", "Objective",
+                     "Compliance", "Status", "Iterations", "Created At"]
+    display_cols = [c for c in display_cols if c in df.columns]
+    st.dataframe(df[display_cols].head(10), use_container_width=True, hide_index=True)
 
 
 # --- Sidebar Configuration ---
@@ -362,6 +482,7 @@ if submitted:
 
     status_box = st.status("🧠 Running LangGraph pipeline...", expanded=True)
     pipeline_steps = []
+    iteration_history = []  # tracks pass/fail/warn counts across retries
 
     def ui_log(msg: str, node: str = ""):
         """Log a pipeline step with styled output."""
@@ -407,6 +528,13 @@ if submitted:
                 ui_log(f"Draft **{kind}** (attempt {update['iteration']}) — {usage.get('input_tokens','?')} in / {usage.get('output_tokens','?')} out tokens", "generate")
             elif node_name == "grade":
                 report = update["grade_report"]
+                snap_passed = sum(1 for i in report.items if i.passed)
+                snap_failed = sum(1 for i in report.items if not i.passed and i.severity == Severity.BLOCKING)
+                snap_warned = sum(1 for i in report.items if not i.passed and i.severity == Severity.WARNING)
+                iteration_history.append({
+                    "attempt": final_state.get("iteration", len(iteration_history) + 1),
+                    "passed": snap_passed, "failed": snap_failed, "warned": snap_warned,
+                })
                 ui_log(f"**{len(report.items)}** rules checked deterministically", "grade")
                 if update.get("stuck"):
                     ui_log("⚠️ Repeated failure detected — stopping iteration early.", "grade")
@@ -469,41 +597,72 @@ if submitted:
         st.subheader("Rendered HTML Draft")
         if not report.all_passed:
             st.error("⚠️ This draft failed blocking compliance checks. It is **NOT** ready for distribution.")
-        components.html(html_preview, height=800, scrolling=True)
+
+        # Fix: flag failing/warned claims directly inside the preview,
+        # not just in the side audit panel.
+        preview_with_flags = highlight_flagged_claims(html_preview, report)
+        components.html(preview_with_flags, height=800, scrolling=True)
 
         # Auto-save to outputs directory
-        from pathlib import Path
         output_filename = f"{brief.market}_{brief.audience}_{brief.brand}_{brief.channel}_{brief.classification}.html".replace(" ", "_").lower()
         output_path = Path("outputs") / output_filename
         output_path.parent.mkdir(exist_ok=True)
         output_path.write_text(html_raw, encoding="utf-8")
-        st.success(f"💾 Saved to `{output_path}`")
+
+        # Fix: persist a metadata sidecar so this run shows up in
+        # "Recent Drafts" below, across sessions.
+        meta = save_draft_metadata(
+            brief, report, final_state["iteration"], elapsed, output_filename,
+            passed_count, failed_count, warn_count, total,
+        )
+        st.success(f"💾 Saved to `{output_path}` (ID {meta['id']})")
 
         st.download_button("📥 Download HTML", data=html_preview, file_name=output_filename, mime="text/html")
 
     with tab_audit:
         st.subheader(f"Compliance Audit Report — Attempt {final_state['iteration']}")
 
+        # Fix: show why the pipeline looped, iteration by iteration.
+        if len(iteration_history) > 1:
+            st.markdown("##### 🔁 Iteration History")
+            cols = st.columns(len(iteration_history))
+            for idx, snap in enumerate(iteration_history):
+                with cols[idx]:
+                    st.metric(f"Attempt {snap['attempt']}", f"{snap['passed']} ✓ {snap['failed']} ✗ {snap['warned']} ⚠")
+            st.caption("Each attempt regenerates the draft and re-runs the deterministic grader until it passes or the retry limit is hit.")
+
         progress_val = passed_count / total
         st.progress(progress_val, text=f"{passed_count} / {total} Checks Passed")
 
-        for item in report.items:
-            if item.passed:
-                status_class = "status-pass"
-                icon = "✅"
-            elif item.severity == Severity.WARNING:
-                status_class = "status-warn"
-                icon = "⚠️"
-            else:
-                status_class = "status-fail"
-                icon = "❌"
-
+        def render_item(item):
+            icon = "✅" if item.passed else ("⚠️" if item.severity == Severity.WARNING else "❌")
+            status_class = "status-pass" if item.passed else ("status-warn" if item.severity == Severity.WARNING else "status-fail")
             st.markdown(f"""
             <div class="status-card {status_class}">
                 <strong>{icon} {item.label}</strong>
                 <span class="card-detail">{item.detail}</span>
             </div>
             """, unsafe_allow_html=True)
+
+        # Fix: group by severity instead of one flat list, so blocking
+        # issues can't get lost among dozens of passed checks.
+        blocking_items = [i for i in report.items if not i.passed and i.severity == Severity.BLOCKING]
+        warning_items = [i for i in report.items if not i.passed and i.severity == Severity.WARNING]
+        passed_items = [i for i in report.items if i.passed]
+
+        if blocking_items:
+            with st.expander(f"❌ Blocking Failures ({len(blocking_items)})", expanded=True):
+                for item in blocking_items:
+                    render_item(item)
+
+        if warning_items:
+            with st.expander(f"⚠️ Warnings ({len(warning_items)})", expanded=True):
+                for item in warning_items:
+                    render_item(item)
+
+        with st.expander(f"✅ Passed Checks ({len(passed_items)})", expanded=False):
+            for item in passed_items:
+                render_item(item)
 
         notes = final_state.get("soft_review_notes", [])
         if notes:
@@ -521,3 +680,7 @@ if submitted:
     with tab_code:
         st.subheader("Raw Generated Code")
         st.code(html_raw, language="html")
+
+# --- Recent Drafts (always visible, persists across sessions/reruns) ---
+st.markdown("---")
+render_recent_drafts()
