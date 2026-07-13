@@ -27,7 +27,7 @@ from pipeline.generator import generate, revise
 from pipeline.grader import grade, GradingContext
 from core.llm_client import LLMClient
 from core.regulatory import resolve_market, resolve_audience
-from core.schema import CampaignBrief, PipelineResult
+from core.schema import CampaignBrief, PipelineResult, Severity
 from pipeline.soft_review import soft_review
 from core.trace_logger import log_iteration, log_resolution
 
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     result = run_pipeline(brief, client=client)
     print(f"Iterations used: {result.iterations_used}")
     for item in result.grade_report.items:
-        status = "PASSED" if item.passed else ("WARN" if item.severity == "warning" else "FAILED")
+        status = "PASSED" if item.passed else ("WARN" if item.severity == Severity.WARNING else "FAILED")
         print(f"  [{status}] {item.label} — {item.detail}")
     if result.soft_review_notes:
         print("\nSoft review (advisory, not verified):")

@@ -14,6 +14,7 @@ from pathlib import Path
 from core.schema import CampaignBrief, GradeReport
 from core.regulatory import market_addendum
 from core.llm_client import LLMClient
+from core.utils import strip_code_fences
 from pipeline.grader import GradingContext
 
 # Loaded once at import time and reused byte-for-byte on every call, for every
@@ -31,14 +32,7 @@ SYSTEM_PROMPT = Path(__file__).parent.parent.joinpath("prompts", "generator_syst
 
 def _extract_html(raw: str) -> str:
     """Strip markdown code fences if the model wrapped its answer in one."""
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines)
-    return text.strip()
+    return strip_code_fences(raw)
 
 
 def _brief_prompt(brief: CampaignBrief, ctx: GradingContext) -> str:

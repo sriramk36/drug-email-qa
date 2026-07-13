@@ -26,6 +26,7 @@ import json
 from typing import Any
 
 from core.schema import CampaignBrief, SoftReviewNote
+from core.utils import strip_code_fences
 
 
 _SOFT_REVIEW_SYSTEM = """You are doing a SECOND-PASS advisory read of pharma marketing draft \
@@ -68,12 +69,7 @@ DRAFT HTML:
 """
     images = list(brief.uploaded_images.values()) if brief.uploaded_images else None
     raw = client.complete(system=_SOFT_REVIEW_SYSTEM, user=user, max_tokens=2000, images=images)
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines)
+    text = strip_code_fences(raw)
     items = json.loads(text)
     return [SoftReviewNote(concern=i.get("concern", "Untitled concern"), detail=i.get("detail", ""))
             for i in items]

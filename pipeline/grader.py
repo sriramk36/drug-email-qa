@@ -22,15 +22,23 @@ Every rule function has the same signature:
 
 from __future__ import annotations
 
+import copy
+import json
 import re
 from dataclasses import dataclass
+from typing import Any, Callable
+
 from bs4 import BeautifulSoup
 
-from core.schema import CampaignBrief, GradeItem, GradeReport, ContentClassification
+from core.schema import CampaignBrief, GradeItem, GradeReport, ContentClassification, Severity
 from core.regulatory import MarketInfo, AudienceInfo
+from core.utils import strip_code_fences
 
 
-from typing import Any
+# Type alias for all rule functions — makes it explicit and catches
+# signature mismatches if you ever add type-checking (mypy/pyright).
+RuleFunc = Callable[["BeautifulSoup", str, CampaignBrief, "GradingContext"], GradeItem]
+
 
 @dataclass
 class GradingContext:
@@ -39,19 +47,24 @@ class GradingContext:
     audience_info: AudienceInfo
     client: Any = None
 
+
 def _visible_body_text(soup: BeautifulSoup) -> str:
     """
     Text a recipient would actually see in the 600px email render —
     excludes the annotation/audit footer, which is allowed to mention
     the brand name internally for the production team.
+
+    Works on a shallow copy of the soup to avoid mutating the original —
+    other rules that run after this one still need the full DOM intact.
     """
-    body = soup.select_one(".email-content") or soup.select_one(".email-outer") or soup
+    soup_copy = copy.copy(soup)
+    body = soup_copy.select_one(".email-content") or soup_copy.select_one(".email-outer") or soup_copy
     for ann in body.select(".annotation-wrap"):
         ann.decompose()
     return body.get_text(" ", strip=True)
 
 
-def rule_draft_watermark(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_draft_watermark(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     ok = "DRAFT" in raw_html and "Not approved for distribution" in raw_html
     return GradeItem(
         rule_id="watermark",
@@ -62,7 +75,7 @@ def rule_draft_watermark(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-def rule_job_code_pending(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_job_code_pending(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     ok = "[CL ID" in raw_html or "CL ID — PENDING" in raw_html
     return GradeItem(
         rule_id="job_code",
@@ -72,12 +85,12 @@ def rule_job_code_pending(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-def rule_hcp_audience_tag(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_hcp_audience_tag(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     if not ctx.audience_info.is_hcp:
         note = "" if ctx.audience_info.known else " (resolver was uncertain — treated as not-HCP by default)"
         return GradeItem(rule_id="audience_tag", label="HCP-only audience statement",
                           passed=True, detail=f"Not required — audience '{brief.audience}' wasn't recognized as HCP{note}.",
-                          severity="warning")
+                          severity=Severity.WARNING)
     text = _visible_body_text(soup).lower()
     market_info = ctx.market_info
     # If the market itself wasn't recognized we can't require a market word to appear at
@@ -97,7 +110,7 @@ def rule_hcp_audience_tag(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-def rule_ae_box(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_ae_box(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     candidates = soup.find_all(style=re.compile(r"border\s*:\s*\d"))
     has_border_el = len(candidates) > 0 or "border: 2px" in raw_html or "2px solid" in raw_html
     ae_line = ctx.tokens.get("ae_report_line", "")
@@ -119,10 +132,10 @@ def rule_ae_box(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-def rule_brand_leak(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_brand_leak(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     if brief.classification != ContentClassification.UNBRANDED_DISEASE_AWARENESS:
         return GradeItem(rule_id="brand_leak", label="No product name in unbranded body copy",
-                          passed=True, detail="Not applicable — content is branded.", severity="warning")
+                          passed=True, detail="Not applicable — content is branded.", severity=Severity.WARNING)
     text = _visible_body_text(soup)
     pattern = re.compile(re.escape(brief.brand), re.IGNORECASE)
     hits = pattern.findall(text)
@@ -136,10 +149,10 @@ def rule_brand_leak(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-def rule_pi_link_if_branded(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_pi_link_if_branded(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     if brief.classification != ContentClassification.BRANDED:
         return GradeItem(rule_id="pi_link", label="Prescribing Information link placeholder present",
-                          passed=True, detail="Not applicable — content is unbranded.", severity="warning")
+                          passed=True, detail="Not applicable — content is unbranded.", severity=Severity.WARNING)
     ok = "Prescribing Information" in raw_html
     return GradeItem(
         rule_id="pi_link",
@@ -149,7 +162,7 @@ def rule_pi_link_if_branded(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-def rule_regulatory_footer_tag(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_regulatory_footer_tag(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     market_info = ctx.market_info
     if not market_info.known:
         source_note = f" (resolver source: {market_info.source})"
@@ -159,7 +172,7 @@ def rule_regulatory_footer_tag(soup, raw_html, brief, ctx) -> GradeItem:
             passed=False,
             detail=f"Market '{brief.market}' couldn't be confidently resolved{source_note} — "
                    f"confirm the applicable code manually.",
-            severity="warning",
+            severity=Severity.WARNING,
         )
     expected = market_info.tags
     ok = any(tag in raw_html for tag in expected)
@@ -173,7 +186,7 @@ def rule_regulatory_footer_tag(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-def rule_no_hardcoded_cta_url(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_no_hardcoded_cta_url(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     real_links = [a.get("href", "") for a in soup.find_all("a")]
     bad = [h for h in real_links if h and h not in ("#",) and not h.startswith("#")
            and "TBC" not in h and "pending" not in h.lower()]
@@ -196,11 +209,11 @@ def rule_no_hardcoded_cta_url(soup, raw_html, brief, ctx) -> GradeItem:
 # to confirm — asserting either as a pass/fail would be claiming certainty the
 # tool doesn't have.
 
-def rule_black_triangle_uk_eu(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_black_triangle_uk_eu(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     market_info = ctx.market_info
     if not market_info.known or not any(t in market_info.tags for t in ("ABPI", "EFPIA")):
         return GradeItem(rule_id="black_triangle", label="Black triangle / additional-monitoring reminder (UK/EU)",
-                          passed=True, detail="Not applicable — market isn't UK/EU.", severity="warning")
+                          passed=True, detail="Not applicable — market isn't UK/EU.", severity=Severity.WARNING)
     mentioned = "▼" in raw_html or "additional monitoring" in raw_html.lower()
     return GradeItem(
         rule_id="black_triangle",
@@ -209,15 +222,15 @@ def rule_black_triangle_uk_eu(soup, raw_html, brief, ctx) -> GradeItem:
         detail="Draft references additional-monitoring status." if mentioned
         else f"UK/EU draft for '{brief.brand}' doesn't mention additional-monitoring status — "
              f"confirm with regulatory whether the ▼ symbol is required before this ships.",
-        severity="warning",
+        severity=Severity.WARNING,
     )
 
 
-def rule_boxed_warning_us(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_boxed_warning_us(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     market_info = ctx.market_info
     if not market_info.known or "FDA" not in market_info.tags:
         return GradeItem(rule_id="boxed_warning", label="Boxed Warning reminder (US)",
-                          passed=True, detail="Not applicable — market isn't US.", severity="warning")
+                          passed=True, detail="Not applicable — market isn't US.", severity=Severity.WARNING)
     mentioned = "boxed warning" in raw_html.lower()
     return GradeItem(
         rule_id="boxed_warning",
@@ -226,11 +239,11 @@ def rule_boxed_warning_us(soup, raw_html, brief, ctx) -> GradeItem:
         detail="Draft references Boxed Warning status." if mentioned
         else f"US draft for '{brief.brand}' doesn't mention Boxed Warning status — "
              f"confirm with regulatory whether one applies before this ships.",
-        severity="warning",
+        severity=Severity.WARNING,
     )
 
 
-def rule_uploaded_images_used(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_uploaded_images_used(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     if not brief.uploaded_images:
         return GradeItem(
             rule_id="uploaded_images_used",
@@ -238,12 +251,12 @@ def rule_uploaded_images_used(soup, raw_html, brief, ctx) -> GradeItem:
             passed=True,
             detail="No images uploaded."
         )
-    
+
     missing = []
     for fname in brief.uploaded_images.keys():
         if f"uploaded:{fname}" not in raw_html:
             missing.append(fname)
-            
+
     ok = len(missing) == 0
     return GradeItem(
         rule_id="uploaded_images_used",
@@ -253,27 +266,29 @@ def rule_uploaded_images_used(soup, raw_html, brief, ctx) -> GradeItem:
     )
 
 
-import json
-
-def rule_brand_guidelines_llm(soup, raw_html, brief, ctx) -> GradeItem:
+def rule_brand_guidelines_llm(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
+    """LLM-based brand/tone judge. Unlike the deterministic rules above,
+    this one uses an LLM call — and unlike _llm_resolve_market in
+    regulatory.py, we deliberately catch exceptions here because this
+    rule is advisory-grade (severity=WARNING): a transient API failure
+    shouldn't block the entire pipeline run when the structural checks
+    already passed. The exception is logged in the detail field so it's
+    visible, not silently swallowed."""
     if not ctx.client:
-        return GradeItem(rule_id="brand_guidelines_llm", label="Brand Guidelines & Tone (LLM Judge)", passed=True, detail="Skipped — no LLM client provided to grader.", severity="warning")
-    
+        return GradeItem(rule_id="brand_guidelines_llm", label="Brand Guidelines & Tone (LLM Judge)",
+                          passed=True, detail="Skipped — no LLM client provided to grader.",
+                          severity=Severity.WARNING)
+
     system = """You are an expert regulatory and brand reviewer acting as an automated judge.
 Evaluate the following HTML draft for strict brand guideline compliance, tone, and visual aesthetics.
 If the text implies unapproved efficacy, has a dangerous tone, uses totally inappropriate layout, or severely violates pharma brand safety, it FAILS.
 If it is safe, clean, and appropriate for the context, it PASSES.
 Respond with ONLY a JSON object: {"passed": true, "detail": "<short explanation>"} or {"passed": false, "detail": "<short explanation>"}"""
-    
+
     user = f"Brand: {brief.brand}\nObjective: {brief.objective}\nAudience: {brief.audience}\n\nDraft HTML:\n{raw_html}"
     try:
         raw = ctx.client.complete(system=system, user=user, max_tokens=1500)
-        text = raw.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()[1:]
-            if lines and lines[-1].strip().startswith("```"):
-                lines = lines[:-1]
-            text = "\n".join(lines)
+        text = strip_code_fences(raw)
         res = json.loads(text)
         passed = bool(res.get("passed", False))
         detail = str(res.get("detail", "LLM rejected the brand voice/aesthetics."))
@@ -281,19 +296,21 @@ Respond with ONLY a JSON object: {"passed": true, "detail": "<short explanation>
             rule_id="brand_guidelines_llm",
             label="Brand Guidelines & Tone (LLM Judge)",
             passed=passed,
-            detail=detail
+            detail=detail,
+            severity=Severity.WARNING,
         )
     except Exception as e:
+        # Caught deliberately — see docstring above for reasoning.
         return GradeItem(
             rule_id="brand_guidelines_llm",
             label="Brand Guidelines & Tone (LLM Judge)",
             passed=False,
             detail=f"LLM judge failed to parse or execute: {str(e)}",
-            severity="warning"
+            severity=Severity.WARNING,
         )
 
 
-ALL_RULES = [
+ALL_RULES: list[RuleFunc] = [
     rule_draft_watermark,
     rule_job_code_pending,
     rule_hcp_audience_tag,

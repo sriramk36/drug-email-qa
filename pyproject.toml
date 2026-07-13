@@ -1,0 +1,32 @@
+[project]
+name = "drug-email-qa"
+version = "0.1.0"
+description = "Pharma marketing draft pipeline — generates compliance-checked HTML email/web mockups with deterministic grading and optional AI advisory review."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "beautifulsoup4>=4.12",
+    "streamlit>=1.35",
+    "openai>=1.55",
+    "langgraph>=1.0",
+    "python-dotenv>=1.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.setuptools.packages.find]
+include = ["core*", "pipeline*", "scripts*", "prompts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

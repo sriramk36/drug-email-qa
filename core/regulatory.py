@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import BaseModel
+from core.utils import strip_code_fences
 
 MARKET_MAP = {
     ("uk", "united kingdom", "britain", "gb", "england"): {
@@ -111,13 +112,7 @@ def _save_cache(cache: dict) -> None:
 
 
 def _parse_json_response(raw: str) -> dict:
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines)
-    return json.loads(text)
+    return json.loads(strip_code_fences(raw))
 
 
 # --- market resolution ---------------------------------------------------

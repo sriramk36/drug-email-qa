@@ -1,6 +1,6 @@
 import pytest
 from bs4 import BeautifulSoup
-from core.schema import CampaignBrief, ContentClassification
+from core.schema import CampaignBrief, ContentClassification, Severity
 
 from pipeline.grader import rule_hcp_audience_tag, rule_regulatory_footer_tag, GradingContext
 from core.regulatory import MarketInfo, AudienceInfo
@@ -21,7 +21,7 @@ def test_word_boundary_regression():
     # AND the market name to appear if the market is known.
     html_fail = "<div>This focuses on healthcare professional insights and discusses outcomes.</div>"
     soup = BeautifulSoup(html_fail, "html.parser")
-    
+
     ctx = GradingContext(
         tokens={},
         market_info=MarketInfo(market_text="US", body_name="FDA", tags=["FDA"], known=True, aliases=["us", "united states"], source="dictionary"),
@@ -56,6 +56,6 @@ def test_unrecognized_market_narnia():
         audience_info=AudienceInfo(audience_text="HCP", source="dictionary", known=True, is_hcp=True)
     )
     item = rule_regulatory_footer_tag(soup, html, brief, ctx2)
-    
+
     assert not item.passed
-    assert item.severity == "warning", "Unrecognized market must produce a warning severity, not blocking."
+    assert item.severity == Severity.WARNING, "Unrecognized market must produce a warning severity, not blocking."

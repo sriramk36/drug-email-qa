@@ -28,7 +28,12 @@ Graph shape:
 
 from __future__ import annotations
 import sys
-if sys.stdout.encoding.lower() != 'utf-8':
+# Guard: Streamlit may replace sys.stdout with a custom object that
+# lacks .encoding or .reconfigure(). Only reconfigure real terminal stdout.
+if (hasattr(sys.stdout, 'encoding')
+        and sys.stdout.encoding
+        and sys.stdout.encoding.lower() != 'utf-8'
+        and hasattr(sys.stdout, 'reconfigure')):
     sys.stdout.reconfigure(encoding='utf-8')
 
 from typing import Optional, TypedDict, Any
@@ -36,7 +41,7 @@ from typing import Optional, TypedDict, Any
 from langgraph.graph import StateGraph, END
 
 from core.brand_config import get_brand_tokens
-from core.schema import CampaignBrief, PipelineResult, GradeReport, SoftReviewNote
+from core.schema import CampaignBrief, PipelineResult, GradeReport, SoftReviewNote, Severity
 from core.llm_client import LLMClient
 from core.regulatory import resolve_market, resolve_audience, MarketInfo, AudienceInfo
 from pipeline.grader import GradingContext
@@ -169,7 +174,7 @@ if __name__ == "__main__":
 
     print(f"\nIterations used: {final_state['iteration']}")
     for item in final_state["grade_report"].items:
-        status = "PASSED" if item.passed else ("WARN" if item.severity == "warning" else "FAILED")
+        status = "PASSED" if item.passed else ("WARN" if item.severity == Severity.WARNING else "FAILED")
         print(f"  [{status}] {item.label} — {item.detail}")
     if final_state.get("soft_review_notes"):
         print("\nSoft review (advisory, not verified):")

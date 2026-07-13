@@ -1,6 +1,6 @@
 import pytest
 from bs4 import BeautifulSoup
-from core.schema import CampaignBrief, ContentClassification
+from core.schema import CampaignBrief, ContentClassification, Severity
 
 from pipeline.grader import (
     rule_draft_watermark,
@@ -11,29 +11,13 @@ from pipeline.grader import (
     rule_pi_link_if_branded,
     rule_regulatory_footer_tag,
     rule_no_hardcoded_cta_url,
-    rule_uploaded_images_used
+    rule_uploaded_images_used,
+    GradingContext,
 )
+from core.regulatory import MarketInfo, AudienceInfo
 
-@pytest.fixture
-def base_brief():
-    return CampaignBrief(
-        channel="email",
-        email_type="mass",
-        market="UK",
-        audience="HCP",
-        brand="Dovato",
-        objective="Test objective",
-        classification=ContentClassification.UNBRANDED_DISEASE_AWARENESS
-    )
-
-@pytest.fixture
-def branded_brief(base_brief):
-    b = base_brief.model_copy(update={"classification": ContentClassification.BRANDED})
-    return b
 
 def run_rule(rule_func, raw_html: str, brief: CampaignBrief, tokens: dict = None):
-    from pipeline.grader import GradingContext
-    from core.regulatory import MarketInfo, AudienceInfo
     ctx = GradingContext(
         tokens=tokens or {},
         market_info=MarketInfo(market_text="UK", body_name="ABPI", tags=["ABPI"], known=True, aliases=["uk", "united kingdom"], source="dictionary"),
@@ -77,7 +61,7 @@ def test_rule_hcp_audience_tag(base_brief):
 
 def test_rule_ae_box(base_brief):
     tokens = {"ae_report_line": "Please report adverse events to www.fda.gov"}
-    
+
     # Pass
     html_pass = "<div style='border: 2px solid black'>Please report adverse events to www.fda.gov</div>"
     item = run_rule(rule_ae_box, html_pass, base_brief, tokens)
@@ -103,7 +87,7 @@ def test_rule_brand_leak(base_brief, branded_brief):
     html_fail = "<div class='email-content'>Try Dovato today.</div>"
     item = run_rule(rule_brand_leak, html_fail, base_brief)
     assert not item.passed
-    
+
     # Pass (branded, leak allowed)
     item = run_rule(rule_brand_leak, html_fail, branded_brief)
     assert item.passed
@@ -118,7 +102,7 @@ def test_rule_pi_link_if_branded(branded_brief, base_brief):
     html_fail = "<div>Learn more on our website.</div>"
     item = run_rule(rule_pi_link_if_branded, html_fail, branded_brief)
     assert not item.passed
-    
+
     # Unbranded brief always passes this
     item = run_rule(rule_pi_link_if_branded, html_fail, base_brief)
     assert item.passed

@@ -33,6 +33,15 @@ class EmailType(str, Enum):
 # pipeline should try to string-match market/audience directly.
 
 
+class Severity(str, Enum):
+    """Grade-item severity — an enum, not a magic string, so a typo
+    like 'bloking' blows up at validation time instead of silently
+    behaving as an unknown category."""
+    BLOCKING = "blocking"
+    WARNING = "warning"
+    ADVISORY = "advisory"  # soft-review notes only
+
+
 class ContentClassification(str, Enum):
     """
     Whether the product name is allowed to appear in the body copy.
@@ -70,7 +79,7 @@ class GradeItem(BaseModel):
     label: str
     passed: bool
     detail: str
-    severity: str = "blocking"  # "blocking" | "warning"
+    severity: Severity = Severity.BLOCKING
 
 
 class GradeReport(BaseModel):
@@ -79,7 +88,7 @@ class GradeReport(BaseModel):
 
     @property
     def all_passed(self) -> bool:
-        return all(i.passed for i in self.items if i.severity == "blocking")
+        return all(i.passed for i in self.items if i.severity == Severity.BLOCKING)
 
     @property
     def failed_items(self) -> list[GradeItem]:
@@ -92,7 +101,7 @@ class SoftReviewNote(BaseModel):
     GradeReport — see soft_review.py for why keeping it separate matters."""
     concern: str
     detail: str
-    severity: str = "advisory"
+    severity: Severity = Severity.ADVISORY
 
 
 class PipelineResult(BaseModel):
