@@ -27,7 +27,7 @@ from pipeline.grader import GradingContext
 # brief's generate/revise loop. Market-specific rules live in regulatory.py
 # and get injected into the (per-call, not cached the same way) USER prompt
 # per-call) USER prompt instead — see _brief_prompt() below.
-SYSTEM_PROMPT = Path(__file__).parent.parent.joinpath("prompts", "generator_system.md").read_text()
+SYSTEM_PROMPT = Path(__file__).parent.parent.joinpath("prompts", "generator_system.md").read_text(encoding="utf-8")
 
 
 def _extract_html(raw: str) -> str:

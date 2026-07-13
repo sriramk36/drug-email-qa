@@ -34,3 +34,6 @@ core/resolution_cache.json
 
 # Uploads
 uploads/
+
+# Mentor reference samples (not source code)
+samples/
