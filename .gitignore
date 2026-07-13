@@ -2,30 +2,35 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
 
 # Virtual environment
 .venv/
 
-# Environment variables
+# Environment variables (NEVER commit secrets)
 .env
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# Uploads and temporary files
-uploads/
-
-# VS Code settings
+# IDE / Editor settings
 .vscode/
+.idea/
+
+# Test cache
+.pytest_cache/
+
+# Generated outputs (re-created on every run)
+outputs/
+!outputs/.gitkeep
+
+# Runtime data files (re-created automatically)
+traces.jsonl
+core/resolution_cache.json
 
 # Logs
 *.log
 
-# Outputs
-outputs/
-
-
-# Traces and Caches
-*.jsonl
-core/resolution_cache.json
+# Uploads
+uploads/
