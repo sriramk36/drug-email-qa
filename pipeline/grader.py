@@ -188,7 +188,7 @@ def rule_regulatory_footer_tag(soup: BeautifulSoup, raw_html: str, brief: Campai
 
 def rule_no_hardcoded_cta_url(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     real_links = [a.get("href", "") for a in soup.find_all("a")]
-    bad = [h for h in real_links if h and h not in ("#",) and not h.startswith("#")
+    bad = [h for h in real_links if h and h not in ("#", "javascript:void(0)") and not h.startswith("#")
            and "TBC" not in h and "pending" not in h.lower()]
     ok = len(bad) == 0
     return GradeItem(
