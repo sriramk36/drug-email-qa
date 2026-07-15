@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import concurrent.futures
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -328,5 +329,10 @@ ALL_RULES: list[RuleFunc] = [
 
 def grade(html: str, brief: CampaignBrief, ctx: GradingContext, iteration: int) -> GradeReport:
     soup = BeautifulSoup(html, "html.parser")
-    items = [rule(soup, html, brief, ctx) for rule in ALL_RULES]
+    
+    # Run rules in parallel to speed up execution (specifically the LLM judge)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(rule, soup, html, brief, ctx) for rule in ALL_RULES]
+        items = [future.result() for future in concurrent.futures.as_completed(futures)]
+        
     return GradeReport(items=items, iteration=iteration)

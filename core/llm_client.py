@@ -42,6 +42,8 @@ from __future__ import annotations
 import os
 import re
 from dotenv import load_dotenv
+import openai
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 load_dotenv()
 
@@ -86,6 +88,16 @@ class LLMClient:
         self._deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
         self._is_reasoning = _is_reasoning_model(self._deployment)
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+        )),
+        reraise=True
+    )
     def complete(self, system: str, user: str, max_tokens: int = 4000, images: list[str] = None) -> str:
         if images:
             user_content = [{"type": "text", "text": user}]
@@ -111,9 +123,7 @@ class LLMClient:
             kwargs["max_tokens"] = max_tokens
             kwargs["temperature"] = 0.4
 
-        # No try/except here — a failed call (bad credentials, rate limit, model error,
-        # whatever) raises straight up. Nothing in this file catches it and substitutes
-        # a placeholder.
+        # The tenacity decorator handles retries for transient errors.
         resp = self._client.chat.completions.create(**kwargs)
 
         content = resp.choices[0].message.content

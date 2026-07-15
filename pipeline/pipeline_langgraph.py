@@ -50,8 +50,8 @@ from pipeline.grader import grade as gen_grade
 from pipeline.soft_review import soft_review as gen_soft_review
 from core.trace_logger import log_iteration, log_resolution
 
-MAX_ITERATIONS = 3
-
+import os
+MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "3"))
 
 class PipelineState(TypedDict, total=False):
     brief: CampaignBrief
