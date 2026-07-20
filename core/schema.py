@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.regulatory import resolve_market, is_hcp_audience
 
@@ -52,6 +52,8 @@ class ContentClassification(str, Enum):
 
 
 class CampaignBrief(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     """The structured input a user submits (mirrors your sample input format)."""
 
     channel: Channel
@@ -75,6 +77,8 @@ class CampaignBrief(BaseModel):
 
 
 class GradeItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     rule_id: str
     label: str
     passed: bool
@@ -83,6 +87,8 @@ class GradeItem(BaseModel):
 
 
 class GradeReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     items: list[GradeItem]
     iteration: int
 
@@ -96,6 +102,8 @@ class GradeReport(BaseModel):
 
 
 class SoftReviewNote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     """Defined here (not just in soft_review.py) so schema.py stays the single
     place PipelineResult's shape is declared. Deliberately NOT part of
     GradeReport — see soft_review.py for why keeping it separate matters."""
@@ -105,6 +113,9 @@ class SoftReviewNote(BaseModel):
 
 
 class PipelineResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = "1.0"
     brief: CampaignBrief
     final_html: str
     grade_report: GradeReport

@@ -15,22 +15,32 @@ import json
 import time
 from pathlib import Path
 
+from core.utils import redact_text
+
 TRACE_FILE = Path(__file__).parent.parent / "traces.jsonl"
 
 
-def log_iteration(brief, grade_report, iteration: int) -> None:
+def _redact_brief(brief) -> dict:
+    return {
+        "brand": redact_text(brief.brand),
+        "market": redact_text(brief.market),
+        "audience": redact_text(brief.audience),
+        "classification": redact_text(brief.classification.value),
+    }
+
+
+def log_iteration(brief, grade_report, iteration: int, prompt_hash: str | None = None, input_hash: str | None = None) -> None:
     record = {
         "ts": time.time(),
         "type": "iteration",
-        "brand": brief.brand,
-        "market": brief.market,
-        "audience": brief.audience,
-        "classification": brief.classification.value,
+        **_redact_brief(brief),
         "iteration": iteration,
         "all_passed": grade_report.all_passed,
         "failed_rules": [i.rule_id for i in grade_report.failed_items],
+        "prompt_hash": prompt_hash,
+        "input_hash": input_hash,
     }
-    with TRACE_FILE.open("a") as f:
+    with TRACE_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
 
@@ -46,13 +56,11 @@ def log_resolution(brief, market_info, audience_info) -> None:
     record = {
         "ts": time.time(),
         "type": "resolution",
-        "brand": brief.brand,
-        "market": brief.market,
+        **_redact_brief(brief),
         "market_source": market_info.source,
         "market_known": market_info.known,
-        "audience": brief.audience,
         "audience_source": audience_info.source,
         "audience_known": audience_info.known,
     }
-    with TRACE_FILE.open("a") as f:
+    with TRACE_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")

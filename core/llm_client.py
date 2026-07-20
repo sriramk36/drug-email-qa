@@ -39,6 +39,8 @@ Env vars (all required, no optional alternates):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 from dotenv import load_dotenv
@@ -112,16 +114,15 @@ class LLMClient:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
+            max_tokens=max_tokens if not self._is_reasoning else None,
+            temperature=0.0 if not self._is_reasoning else None,
         )
         if self._is_reasoning:
-            # temperature and max_tokens are both rejected by reasoning models — see
-            # module docstring. reasoning_effort="low" keeps hidden thinking-token spend
-            # down for a templated generation task that doesn't need deep deliberation.
+            # reasoning models reject temperature and max_tokens directly.
+            kwargs.pop("max_tokens", None)
+            kwargs.pop("temperature", None)
             kwargs["max_completion_tokens"] = max_tokens
             kwargs["reasoning_effort"] = "low"
-        else:
-            kwargs["max_tokens"] = max_tokens
-            kwargs["temperature"] = 0.4
 
         # The tenacity decorator handles retries for transient errors.
         resp = self._client.chat.completions.create(**kwargs)
@@ -146,4 +147,7 @@ class LLMClient:
         if reasoning:
             usage_dict["reasoning_tokens"] = reasoning
         self.last_usage = usage_dict
+        self.last_model = self._deployment
+        self.last_prompt_hash = hashlib.sha256((system + user).encode("utf-8")).hexdigest()
+        self.last_input_hash = hashlib.sha256(user.encode("utf-8")).hexdigest()
         return content

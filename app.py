@@ -28,6 +28,7 @@ import time
 import base64
 import json
 import re
+import textwrap
 from datetime import datetime
 from pathlib import Path
 
@@ -144,6 +145,14 @@ st.markdown("""
         border-left: 4px solid var(--accent-emerald);
         background: linear-gradient(90deg, rgba(16,185,129,0.08) 0%, transparent 40%);
     }
+    .status-info {
+        border-left: 4px solid var(--accent-sky);
+        background: linear-gradient(90deg, rgba(56,189,248,0.08) 0%, transparent 40%);
+    }
+    .status-pass {
+        border-left: 4px solid var(--accent-emerald);
+        background: linear-gradient(90deg, rgba(16,185,129,0.08) 0%, transparent 40%);
+    }
     .status-fail {
         border-left: 4px solid var(--accent-rose);
         background: linear-gradient(90deg, rgba(244,63,94,0.08) 0%, transparent 40%);
@@ -151,6 +160,42 @@ st.markdown("""
     .status-warn {
         border-left: 4px solid var(--accent-amber);
         background: linear-gradient(90deg, rgba(245,158,11,0.08) 0%, transparent 40%);
+    }
+    .delta-grid {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 0.95rem;
+    }
+    .delta-grid th,
+    .delta-grid td {
+        padding: 0.85rem 1rem;
+        border: 1px solid rgba(148,163,184,0.18);
+    }
+    .delta-grid th {
+        background: rgba(99,102,241,0.08);
+        color: var(--text-primary);
+        text-align: left;
+        width: 25%;
+    }
+    .delta-cell {
+        color: var(--text-muted);
+        line-height: 1.5;
+    }
+    .delta-pass { color: var(--accent-emerald); }
+    .delta-warn { color: var(--accent-amber); }
+    .delta-fail { color: var(--accent-rose); }
+    .log-timestamp {
+        color: #94a3b8;
+        font-size: 0.75rem;
+        margin-left: 0.7rem;
+    }
+    .step-content {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        gap: 1rem;
+        align-items: center;
     }
 
     .card-detail {
@@ -426,6 +471,30 @@ def load_draft_history():
     return records
 
 
+def render_verification_diff(snapshot: dict[str, list[str]]) -> None:
+    if not snapshot:
+        return
+    rows = []
+    if snapshot.get("rectified_rules"):
+        rows.append(("Rectified", snapshot["rectified_rules"], "delta-pass"))
+    if snapshot.get("still_failing"):
+        rows.append(("Still failing", snapshot["still_failing"], "delta-warn"))
+    if snapshot.get("new_failures"):
+        rows.append(("New failures", snapshot["new_failures"], "delta-fail"))
+    if not rows:
+        st.markdown("*No rule changes detected in this iteration.*")
+        return
+    table_rows = "".join(
+        f"<tr><th>{label}</th><td class='delta-cell {cls}'>{', '.join(values)}</td></tr>"
+        for label, values, cls in rows
+    )
+    st.markdown(f"""
+    <table class="delta-grid">
+        {table_rows}
+    </table>
+    """, unsafe_allow_html=True)
+
+
 def render_recent_drafts():
     st.markdown('<div class="history-heading">📋 Recent Drafts</div>', unsafe_allow_html=True)
     records = load_draft_history()
@@ -480,26 +549,58 @@ if submitted:
         uploaded_images=image_map
     )
 
-    status_box = st.status("🧠 Running LangGraph pipeline...", expanded=True)
+    status_card = st.empty()
+    pipeline_log = st.empty()
+    node_icons = {"resolve": "🔍", "generate": "✨", "grade": "🛡️", "soft_review": "💬"}
+
+    def render_status_card(title: str, status: str = "running", detail: str = "Live verification loop updates appear below as each stage completes."):
+        if status == "running":
+            type_class = "status-info"
+        elif status == "success":
+            type_class = "status-pass"
+        elif status == "warn":
+            type_class = "status-warn"
+        elif status == "error":
+            type_class = "status-fail"
+        else:
+            type_class = "status-pass"
+        status_card.markdown(f"""
+        <div class="status-card {type_class}" style="padding:1rem; margin-bottom:1rem;">
+            <strong>{title}</strong>
+            <div style="color:#8b949e; margin-top:0.35rem;">{detail}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    render_status_card("🧠 Running LangGraph pipeline...", "running")
     pipeline_steps = []
     iteration_history = []  # tracks pass/fail/warn counts across retries
+    prev_failed_items = []
+    current_iteration = 0
+
+    def render_pipeline_log() -> None:
+        rendered = [
+            "<div style='margin-bottom:0.75rem; font-weight:700; color:#e6edf3;'>🔁 Verification Loop</div>"
+        ]
+        for node, msg, timestamp in pipeline_steps:
+            icon = node_icons.get(node, "→")
+            time_label = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
+            rendered.append(textwrap.dedent(f"""<div class="pipeline-step step-{node}">
+                <div class="step-icon">{icon}</div>
+                <div class="step-content">
+                    <span>{msg}</span>
+                    <span class="log-timestamp">{time_label}</span>
+                </div>
+            </div>""").strip())
+        pipeline_log.markdown("".join(rendered), unsafe_allow_html=True)
 
     def ui_log(msg: str, node: str = ""):
         """Log a pipeline step with styled output."""
-        node_icons = {"resolve": "🔍", "generate": "✨", "grade": "🛡️", "soft_review": "💬"}
-        icon = node_icons.get(node, "→")
-        pipeline_steps.append((node, msg))
-        status_box.markdown(f"""
-        <div class="pipeline-step step-{node}">
-            <div class="step-icon">{icon}</div>
-            <span>{msg}</span>
-        </div>
-        """, unsafe_allow_html=True)
+        pipeline_steps.append((node, msg, time.time()))
+        render_pipeline_log()
 
     try:
         client = LLMClient()
     except RuntimeError as e:
-        status_box.update(label="❌ Configuration Error", state="error")
+        render_status_card("❌ Configuration Error", "error", "Missing Azure OpenAI credentials or incorrect configuration.")
         st.error(str(e))
         st.stop()
 
@@ -522,37 +623,84 @@ if submitted:
                 mi, ai = update["market_info"], update["audience_info"]
                 ui_log(f"Market → **{mi.body_name}** (source: {mi.source})", "resolve")
                 ui_log(f"Audience → **{'HCP' if ai.is_hcp else 'not HCP'}** (source: {ai.source})", "resolve")
+                render_status_card("🧠 Resolution complete", "running", f"Resolved market and audience for the first draft.")
             elif node_name == "generate":
+                current_iteration = update.get("iteration", final_state.get("iteration", 0) + 1)
                 usage = client.last_usage or {}
-                kind = "generated" if update["iteration"] == 1 else "revised"
-                ui_log(f"Draft **{kind}** (attempt {update['iteration']}) — {usage.get('input_tokens','?')} in / {usage.get('output_tokens','?')} out tokens", "generate")
+                kind = "generated" if current_iteration == 1 else "revised"
+                if current_iteration == 1:
+                    render_status_card(f"✨ Generation {current_iteration} complete", "running", "Now verifying the first draft against compliance rules.")
+                    ui_log(f"First draft generated (attempt {current_iteration}) — {usage.get('input_tokens','?')} in / {usage.get('output_tokens','?')} out tokens", "generate")
+                else:
+                    failed_ids = [item.rule_id for item in prev_failed_items]
+                    render_status_card(f"✨ Revision {current_iteration} complete", "running", f"Draft revised to address {len(failed_ids)} previously failed rule(s). Verifying again.")
+                    ui_log(f"Revised draft generated (attempt {current_iteration}) — fixing {', '.join(failed_ids)}", "generate")
             elif node_name == "grade":
                 report = update["grade_report"]
+                current_iteration = final_state.get("iteration", 0)
+                failed_items = [i for i in report.failed_items if i.severity == Severity.BLOCKING]
+                warn_items = [i for i in report.items if not i.passed and i.severity == Severity.WARNING]
+                failed_rules = [i.rule_id for i in failed_items]
+                warn_rules = [i.rule_id for i in warn_items]
                 snap_passed = sum(1 for i in report.items if i.passed)
-                snap_failed = sum(1 for i in report.items if not i.passed and i.severity == Severity.BLOCKING)
-                snap_warned = sum(1 for i in report.items if not i.passed and i.severity == Severity.WARNING)
+                snap_failed = len(failed_rules)
+                snap_warned = len(warn_rules)
+                prior_failed_ids = [item.rule_id for item in prev_failed_items]
+                rectified_rules = [rule for rule in prior_failed_ids if rule not in failed_rules]
+                still_failing = [rule for rule in failed_rules if rule in prior_failed_ids]
+                new_failures = [rule for rule in failed_rules if rule not in prior_failed_ids]
                 iteration_history.append({
-                    "attempt": final_state.get("iteration", len(iteration_history) + 1),
+                    "attempt": current_iteration,
                     "passed": snap_passed, "failed": snap_failed, "warned": snap_warned,
+                    "failed_rules": failed_rules,
+                    "new_failures": new_failures,
+                    "still_failing": still_failing,
+                    "rectified_rules": rectified_rules,
                 })
-                ui_log(f"**{len(report.items)}** rules checked deterministically", "grade")
+                prev_failed_items = failed_items
+                if report.all_passed:
+                    render_status_card(f"✅ Generation {current_iteration} passed", "success", "All deterministic blocking checks passed. Soft review will run if enabled.")
+                    ui_log(f"Generation {current_iteration} passed all blocking checks.", "grade")
+                else:
+                    render_status_card(f"❌ Generation {current_iteration} failed", "error", f"Failed rules: {', '.join(failed_rules)}")
+                    ui_log(f"Generation {current_iteration} failed {snap_failed} blocking rule(s) and {snap_warned} warning(s).", "grade")
+                    if rectified_rules or still_failing or new_failures:
+                        sections = []
+                        if rectified_rules:
+                            sections.append(f"<div><strong>Rectified from prior attempt:</strong> {', '.join(rectified_rules)}</div>")
+                        if still_failing:
+                            sections.append(f"<div><strong>Still failing:</strong> {', '.join(still_failing)}</div>")
+                        if new_failures:
+                            sections.append(f"<div><strong>New failures this iteration:</strong> {', '.join(new_failures)}</div>")
+                        pipeline_log.markdown(textwrap.dedent(f"""<div style='padding:0.65rem 1rem; border-radius:10px; background:#0f172a; margin:0.5rem 0;'>
+                            {''.join(sections)}
+                        </div>""").strip(), unsafe_allow_html=True)
+                    if failed_items:
+                        detail_rows = "".join(
+                            f"<div style='margin-top:0.35rem;'><strong>{item.rule_id}</strong>: {item.detail}</div>"
+                            for item in failed_items
+                        )
+                        pipeline_log.markdown(textwrap.dedent(f"""<div style='padding:0.65rem 1rem; border-radius:10px; background:#13161c; margin:0.5rem 0;'>
+                            <strong>Iteration {current_iteration} failures:</strong>
+                            {detail_rows}
+                        </div>""").strip(), unsafe_allow_html=True)
                 if update.get("stuck"):
                     ui_log("⚠️ Repeated failure detected — stopping iteration early.", "grade")
             elif node_name == "soft_review":
                 notes = update.get("soft_review_notes", [])
                 ui_log(f"**{len(notes)}** advisory note(s)" if notes else "No concerns flagged ✓", "soft_review")
+                render_status_card("💬 Soft review complete", "running", f"Soft review produced {len(notes)} advisory note(s).")
 
     except Exception as e:
-        status_box.update(label="❌ Pipeline Error", state="error")
+        render_status_card("❌ Pipeline Error", "error", "Pipeline failed with an error. See the message below.")
         st.error(f"Pipeline failed with an error:\n\n```\n{type(e).__name__}: {e}\n```\n\nCheck your Azure credentials, network connection, and API quota.")
         st.stop()
 
     elapsed = time.time() - t0
     report = final_state["grade_report"]
-    status_box.update(
-        label=f"{'✅' if report.all_passed else '⚠️'} Done — {final_state['iteration']} iteration(s), {elapsed:.1f}s",
-        state="complete" if report.all_passed else "error",
-    )
+    summary_title = f"{'✅' if report.all_passed else '⚠️'} Done — {final_state['iteration']} iteration(s), {elapsed:.1f}s"
+    summary_detail = "This draft passed all blocking checks." if report.all_passed else "This draft has blocking/warning issues and is not ready for distribution."
+    render_status_card(summary_title, "success" if report.all_passed else "error", summary_detail)
 
     # --- Metrics Summary ---
     passed_count = sum(1 for i in report.items if i.passed)
@@ -630,6 +778,11 @@ if submitted:
                 with cols[idx]:
                     st.metric(f"Attempt {snap['attempt']}", f"{snap['passed']} ✓ {snap['failed']} ✗ {snap['warned']} ⚠")
             st.caption("Each attempt regenerates the draft and re-runs the deterministic grader until it passes or the retry limit is hit.")
+
+            last_snap = iteration_history[-1]
+            if last_snap["rectified_rules"] or last_snap["still_failing"] or last_snap["new_failures"]:
+                with st.expander("Latest verification changes", expanded=True):
+                    render_verification_diff(last_snap)
 
         progress_val = passed_count / total
         st.progress(progress_val, text=f"{passed_count} / {total} Checks Passed")
