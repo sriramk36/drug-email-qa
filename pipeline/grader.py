@@ -90,8 +90,8 @@ def rule_hcp_audience_tag(soup: BeautifulSoup, raw_html: str, brief: CampaignBri
     if not ctx.audience_info.is_hcp:
         note = "" if ctx.audience_info.known else " (resolver was uncertain — treated as not-HCP by default)"
         return GradeItem(rule_id="audience_tag", label="HCP-only audience statement",
-                          passed=True, detail=f"Not required — audience '{brief.audience}' wasn't recognized as HCP{note}.",
-                          severity=Severity.WARNING)
+                              passed=True, detail=f"Not required — audience '{brief.audience}' wasn't recognized as HCP{note}.",
+                              severity=Severity.BLOCKING)
     text = _visible_body_text(soup).lower()
     market_info = ctx.market_info
     # If the market itself wasn't recognized we can't require a market word to appear at
@@ -136,7 +136,7 @@ def rule_ae_box(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: G
 def rule_brand_leak(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     if brief.classification != ContentClassification.UNBRANDED_DISEASE_AWARENESS:
         return GradeItem(rule_id="brand_leak", label="No product name in unbranded body copy",
-                          passed=True, detail="Not applicable — content is branded.", severity=Severity.WARNING)
+                  passed=True, detail="Not applicable — content is branded.", severity=Severity.BLOCKING)
     text = _visible_body_text(soup)
     pattern = re.compile(re.escape(brief.brand), re.IGNORECASE)
     hits = pattern.findall(text)
@@ -153,7 +153,7 @@ def rule_brand_leak(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ct
 def rule_pi_link_if_branded(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     if brief.classification != ContentClassification.BRANDED:
         return GradeItem(rule_id="pi_link", label="Prescribing Information link placeholder present",
-                          passed=True, detail="Not applicable — content is unbranded.", severity=Severity.WARNING)
+                  passed=True, detail="Not applicable — content is unbranded.", severity=Severity.BLOCKING)
     ok = "Prescribing Information" in raw_html
     return GradeItem(
         rule_id="pi_link",
@@ -173,7 +173,7 @@ def rule_regulatory_footer_tag(soup: BeautifulSoup, raw_html: str, brief: Campai
             passed=False,
             detail=f"Market '{brief.market}' couldn't be confidently resolved{source_note} — "
                    f"confirm the applicable code manually.",
-            severity=Severity.WARNING,
+            severity=Severity.BLOCKING,
         )
     expected = market_info.tags
     ok = any(tag in raw_html for tag in expected)
@@ -214,7 +214,7 @@ def rule_black_triangle_uk_eu(soup: BeautifulSoup, raw_html: str, brief: Campaig
     market_info = ctx.market_info
     if not market_info.known or not any(t in market_info.tags for t in ("ABPI", "EFPIA")):
         return GradeItem(rule_id="black_triangle", label="Black triangle / additional-monitoring reminder (UK/EU)",
-                          passed=True, detail="Not applicable — market isn't UK/EU.", severity=Severity.WARNING)
+                              passed=True, detail="Not applicable — market isn't UK/EU.", severity=Severity.BLOCKING)
     mentioned = "▼" in raw_html or "additional monitoring" in raw_html.lower()
     return GradeItem(
         rule_id="black_triangle",
@@ -223,7 +223,7 @@ def rule_black_triangle_uk_eu(soup: BeautifulSoup, raw_html: str, brief: Campaig
         detail="Draft references additional-monitoring status." if mentioned
         else f"UK/EU draft for '{brief.brand}' doesn't mention additional-monitoring status — "
              f"confirm with regulatory whether the ▼ symbol is required before this ships.",
-        severity=Severity.WARNING,
+        severity=Severity.BLOCKING,
     )
 
 
@@ -231,7 +231,7 @@ def rule_boxed_warning_us(soup: BeautifulSoup, raw_html: str, brief: CampaignBri
     market_info = ctx.market_info
     if not market_info.known or "FDA" not in market_info.tags:
         return GradeItem(rule_id="boxed_warning", label="Boxed Warning reminder (US)",
-                          passed=True, detail="Not applicable — market isn't US.", severity=Severity.WARNING)
+                              passed=True, detail="Not applicable — market isn't US.", severity=Severity.BLOCKING)
     mentioned = "boxed warning" in raw_html.lower()
     return GradeItem(
         rule_id="boxed_warning",
@@ -240,7 +240,7 @@ def rule_boxed_warning_us(soup: BeautifulSoup, raw_html: str, brief: CampaignBri
         detail="Draft references Boxed Warning status." if mentioned
         else f"US draft for '{brief.brand}' doesn't mention Boxed Warning status — "
              f"confirm with regulatory whether one applies before this ships.",
-        severity=Severity.WARNING,
+        severity=Severity.BLOCKING,
     )
 
 
@@ -267,6 +267,82 @@ def rule_uploaded_images_used(soup: BeautifulSoup, raw_html: str, brief: Campaig
     )
 
 
+def rule_unsubscribe_link(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
+    """Require an unsubscribe or preference link for marketing communications.
+    For HCP-targeted communications this is advisory (warning); for other
+    audiences it's recommended but left as a warning so humans can review.
+    """
+    anchors = [a.get_text(" ", strip=True).lower() for a in soup.find_all("a")]
+    hrefs = [a.get("href", "").lower() for a in soup.find_all("a")]
+    found = any("unsubscribe" in t for t in anchors) or any("unsubscribe" in h for h in hrefs) or any("preferences" in t for t in anchors)
+    return GradeItem(
+        rule_id="unsubscribe_link",
+        label="Unsubscribe / preferences link present",
+        passed=found,
+        detail="Found unsubscribe or preference link." if found else "Missing unsubscribe or email-preferences link in footer.",
+        severity=Severity.BLOCKING,
+    )
+
+
+def rule_contact_info_present(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
+    """Check for presence of a medical contact (email or phone) for adverse
+    events / medical information. This is advisory (warning) if missing.
+    """
+    text = _visible_body_text(soup).lower()
+    has_email = bool(re.search(r"[\w.%-]+@[\w.-]+\.[a-z]{2,}", text))
+    has_phone = bool(re.search(r"\+?\d[\d\s\-()]{6,}\d", text))
+    has_medical = "medical information" in text or "medical affairs" in text or "for medical" in text
+    ok = has_email or has_phone or has_medical
+    detail = "Contact info present." if ok else "No medical contact email/phone or 'medical information' text found."
+    return GradeItem(
+        rule_id="contact_info",
+        label="Medical contact / medical information present",
+        passed=ok,
+        detail=detail,
+        severity=Severity.BLOCKING,
+    )
+
+
+def rule_image_alt_texts(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
+    imgs = soup.find_all("img")
+    # only check images inside the email content area if present
+    if soup.select_one('.email-content'):
+        imgs = soup.select('.email-content img')
+    missing_alt = [str(i) for i in imgs if not i.get("alt") or not i.get("alt").strip()]
+    ok = len(missing_alt) == 0
+    return GradeItem(
+        rule_id="image_alt_text",
+        label="Images include alt text",
+        passed=ok,
+        detail="All images have alt text." if ok else f"{len(missing_alt)} image(s) missing alt text.",
+        severity=Severity.BLOCKING,
+    )
+
+
+def rule_logo_present(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
+    """For branded content require a logo element (img with 'logo' in class/id/alt).
+    This is a warning rather than blocking so designers/regulatory can address
+    layout exceptions.
+    """
+    if brief.classification != ContentClassification.BRANDED:
+        return GradeItem(rule_id="brand_logo", label="Brand logo present",
+                          passed=True, detail="Not applicable — unbranded content.", severity=Severity.BLOCKING)
+    imgs = soup.find_all("img")
+    logo_like = []
+    for img in imgs:
+        attrs = " ".join([str(img.get("alt", "")), str(img.get("id", "")), " ".join(img.get("class", []) if img.get("class") else [])]).lower()
+        if "logo" in attrs or (brief.brand and brief.brand.lower() in attrs):
+            logo_like.append(img)
+    ok = len(logo_like) > 0
+    return GradeItem(
+        rule_id="brand_logo",
+        label="Brand logo present",
+        passed=ok,
+        detail="Logo detected." if ok else "No obvious brand logo element found (img with 'logo' in alt/class/id).",
+        severity=Severity.BLOCKING,
+    )
+
+
 def rule_brand_guidelines_llm(soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem:
     """LLM-based brand/tone judge. Unlike the deterministic rules above,
     this one uses an LLM call — and unlike _llm_resolve_market in
@@ -277,8 +353,8 @@ def rule_brand_guidelines_llm(soup: BeautifulSoup, raw_html: str, brief: Campaig
     visible, not silently swallowed."""
     if not ctx.client:
         return GradeItem(rule_id="brand_guidelines_llm", label="Brand Guidelines & Tone (LLM Judge)",
-                          passed=True, detail="Skipped — no LLM client provided to grader.",
-                          severity=Severity.WARNING)
+                  passed=True, detail="Skipped — no LLM client provided to grader.",
+                  severity=Severity.BLOCKING)
 
     system = """You are an expert regulatory and brand reviewer acting as an automated judge.
 Evaluate the following HTML draft for strict brand guideline compliance, tone, and visual aesthetics.
@@ -298,7 +374,7 @@ Respond with ONLY a JSON object: {"passed": true, "detail": "<short explanation>
             label="Brand Guidelines & Tone (LLM Judge)",
             passed=passed,
             detail=detail,
-            severity=Severity.WARNING,
+            severity=Severity.BLOCKING,
         )
     except Exception as e:
         # Caught deliberately — see docstring above for reasoning.
@@ -307,7 +383,7 @@ Respond with ONLY a JSON object: {"passed": true, "detail": "<short explanation>
             label="Brand Guidelines & Tone (LLM Judge)",
             passed=False,
             detail=f"LLM judge failed to parse or execute: {str(e)}",
-            severity=Severity.WARNING,
+            severity=Severity.BLOCKING,
         )
 
 
@@ -322,6 +398,10 @@ ALL_RULES: list[RuleFunc] = [
     rule_no_hardcoded_cta_url,
     rule_black_triangle_uk_eu,
     rule_boxed_warning_us,
+    rule_unsubscribe_link,
+    rule_contact_info_present,
+    rule_image_alt_texts,
+    rule_logo_present,
     rule_uploaded_images_used,
     rule_brand_guidelines_llm,
 ]

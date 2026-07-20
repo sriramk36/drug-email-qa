@@ -299,3 +299,29 @@ finished, MLR-approved claim.
 If you are given a prior HTML draft plus a list of FAILED grader
 checks, do not start over — patch only what's needed to address each
 failed check, preserving everything that already passed.
+
+
+## Required-concepts checklist (for generator)
+
+When producing the initial generation (iteration 1), attempt to satisfy
+the following structural and content concepts so the deterministic grader
+has the best chance of passing as many checks as possible. These are
+guidance items for the generator; the grader still enforces them
+mechanically and will flag any failures.
+
+- `[watermark]` — DRAFT watermark and "Not approved for distribution" text in the footer.
+- `[job_code]` — Job code placeholder (e.g., `[CL ID — PENDING]`).
+- `[audience_tag]` — Explicit audience line when `audience == HCP` (e.g., "For UK healthcare professionals only").
+- `[ae_box]` — Bordered AE reporting box containing the exact AE reporting line supplied in `ae_report_line`.
+- `[brand_leak]` — For unbranded classification, do not include the product name in visible body copy.
+- `[pi_link]` — For branded classification include a Prescribing Information link/placeholder (use `pi_link_placeholder` token).
+- `[reg_footer]` — Include the applicable regulatory code/tag in the footer (per market).
+- `[cta_url]` — Use placeholder CTA URLs (no fabricated external destinations); annotate links as `[TBC]`.
+- `[image_alt_text]` — Provide meaningful `alt` text for images used in the email body.
+- `[unsubscribe_link]` — Include an unsubscribe or email-preferences link in the footer.
+- `[contact_info]` — Provide a medical contact email/phone or explicit "medical information" text.
+- `[brand_logo]` — For branded drafts, include an obvious brand logo element (img with `alt`/`class`/`id` indicating logo).
+
+These items are normative guidance for the generator; the grader will
+still mark missing/incorrect items and the verification loop will ask
+the generator to patch only what's needed in subsequent iterations.

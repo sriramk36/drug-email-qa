@@ -12,6 +12,10 @@ from pipeline.grader import (
     rule_regulatory_footer_tag,
     rule_no_hardcoded_cta_url,
     rule_uploaded_images_used,
+    rule_unsubscribe_link,
+    rule_contact_info_present,
+    rule_image_alt_texts,
+    rule_logo_present,
     GradingContext,
 )
 from core.regulatory import MarketInfo, AudienceInfo
@@ -144,3 +148,53 @@ def test_rule_uploaded_images_used(base_brief):
     html_fail = "<html></html>"
     item = run_rule(rule_uploaded_images_used, html_fail, base_brief)
     assert not item.passed
+
+
+def test_rule_unsubscribe_link(base_brief):
+    html_pass = "<footer><a href='https://example.com/unsubscribe'>Unsubscribe</a></footer>"
+    item = run_rule(rule_unsubscribe_link, html_pass, base_brief)
+    assert item.passed
+
+    html_fail = "<footer></footer>"
+    item = run_rule(rule_unsubscribe_link, html_fail, base_brief)
+    assert not item.passed
+
+
+def test_rule_contact_info_present(base_brief):
+    html_pass_email = "<div>For medical information email medinfo@example.com</div>"
+    item = run_rule(rule_contact_info_present, html_pass_email, base_brief)
+    assert item.passed
+
+    html_pass_phone = "<div>Call +1 555-123-4567 for medical enquiries</div>"
+    item = run_rule(rule_contact_info_present, html_pass_phone, base_brief)
+    assert item.passed
+
+    html_fail = "<div>Contact us</div>"
+    item = run_rule(rule_contact_info_present, html_fail, base_brief)
+    assert not item.passed
+
+
+def test_rule_image_alt_texts(base_brief):
+    html_pass = "<div class='email-content'><img src='a.png' alt='hero image'/></div>"
+    item = run_rule(rule_image_alt_texts, html_pass, base_brief)
+    assert item.passed
+
+    html_fail = "<div class='email-content'><img src='a.png'/></div>"
+    item = run_rule(rule_image_alt_texts, html_fail, base_brief)
+    assert not item.passed
+
+
+def test_rule_logo_present(branded_brief, base_brief):
+    # Pass for branded
+    html_pass = "<img alt='Dovato logo' src='logo.png'/>"
+    item = run_rule(rule_logo_present, html_pass, branded_brief)
+    assert item.passed
+
+    # Fail when logo missing for branded
+    html_fail = "<img src='hero.png' alt='hero'/>"
+    item = run_rule(rule_logo_present, html_fail, branded_brief)
+    assert not item.passed
+
+    # Unbranded content is not applicable
+    item = run_rule(rule_logo_present, html_fail, base_brief)
+    assert item.passed

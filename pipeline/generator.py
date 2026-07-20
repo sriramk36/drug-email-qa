@@ -57,6 +57,8 @@ Brand tokens to use exactly as given (do not invent alternatives):
 - AE reporting line (use verbatim inside the bordered AE box): {tokens['ae_report_line']}
 - PI link placeholder text: {tokens['pi_link_placeholder']}
 
+Follow the system prompt's "Required-concepts checklist" section and try to satisfy those items on the initial generation.
+
 Return ONLY the HTML file contents. No preamble, no explanation, no markdown fences.
 """
 

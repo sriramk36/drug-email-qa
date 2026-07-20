@@ -656,6 +656,10 @@ if submitted:
                     "new_failures": new_failures,
                     "still_failing": still_failing,
                     "rectified_rules": rectified_rules,
+                    "concepts": [
+                        {"rule_id": it.rule_id, "passed": it.passed, "label": it.label, "detail": it.detail}
+                        for it in report.items
+                    ],
                 })
                 prev_failed_items = failed_items
                 if report.all_passed:
@@ -779,10 +783,20 @@ if submitted:
                     st.metric(f"Attempt {snap['attempt']}", f"{snap['passed']} ✓ {snap['failed']} ✗ {snap['warned']} ⚠")
             st.caption("Each attempt regenerates the draft and re-runs the deterministic grader until it passes or the retry limit is hit.")
 
-            last_snap = iteration_history[-1]
-            if last_snap["rectified_rules"] or last_snap["still_failing"] or last_snap["new_failures"]:
-                with st.expander("Latest verification changes", expanded=True):
-                    render_verification_diff(last_snap)
+            # Show per-attempt detailed checklist of concepts
+            for snap in iteration_history:
+                with st.expander(f"Attempt {snap['attempt']} — {snap['passed']} ✓ {snap['failed']} ✗ {snap['warned']} ⚠", expanded=False):
+                    # Summary deltas for this attempt
+                    if snap["rectified_rules"] or snap["still_failing"] or snap["new_failures"]:
+                        render_verification_diff(snap)
+
+                    # Checklist: show each rule's status and short detail
+                    checklist_html = []
+                    for c in snap.get("concepts", []):
+                        icon = "✅" if c["passed"] else "❌"
+                        cls = "delta-pass" if c["passed"] else "delta-fail"
+                        checklist_html.append(f"<div style='margin:0.25rem 0;'><strong>{icon} {c['rule_id']}</strong> — <span class='delta-cell {cls}'>{c['label']}</span><div style='color:#94a3b8;margin-left:1rem;font-size:0.9rem'>{c['detail']}</div></div>")
+                    st.markdown("".join(checklist_html), unsafe_allow_html=True)
 
         progress_val = passed_count / total
         st.progress(progress_val, text=f"{passed_count} / {total} Checks Passed")

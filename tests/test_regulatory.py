@@ -58,4 +58,4 @@ def test_unrecognized_market_narnia():
     item = rule_regulatory_footer_tag(soup, html, brief, ctx2)
 
     assert not item.passed
-    assert item.severity == Severity.WARNING, "Unrecognized market must produce a warning severity, not blocking."
+    assert item.severity == Severity.BLOCKING, "Unrecognized market now treated as blocking per policy change."
