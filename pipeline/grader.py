@@ -288,10 +288,35 @@ def rule_contact_info_present(soup: BeautifulSoup, raw_html: str, brief: Campaig
     """Check for presence of a medical contact (email or phone) for adverse
     events / medical information. This is advisory (warning) if missing.
     """
+    # Search visible text
     text = _visible_body_text(soup).lower()
-    has_email = bool(re.search(r"[\w.%-]+@[\w.-]+\.[a-z]{2,}", text))
-    has_phone = bool(re.search(r"\+?\d[\d\s\-()]{6,}\d", text))
-    has_medical = "medical information" in text or "medical affairs" in text or "for medical" in text
+
+    # 1) explicit mailto / tel links
+    mailto_links = [a.get('href', '') for a in soup.find_all('a') if a.get('href', '').lower().startswith('mailto:')]
+    tel_links = [a.get('href', '') for a in soup.find_all('a') if a.get('href', '').lower().startswith('tel:')]
+
+    # 2) obvious email patterns in visible text (simple but effective)
+    has_email = bool(re.search(r"[\w.%-]+@[\w.-]+\.[a-z]{2,}", text)) or len(mailto_links) > 0
+
+    # 3) phone numbers (allow international, extensions, spaces, parens, dashes)
+    has_phone = bool(re.search(r"\+?\d[\d\s\-()]{6,}\d", text)) or len(tel_links) > 0
+
+    # 4) common phrase variants for medical contact
+    medical_variants = [
+        "medical information",
+        "medical enquiries",
+        "medical inquiries",
+        "medical enquiries",
+        "medical affairs",
+        "for medical",
+        "for medical information",
+        "medical information request",
+        "medical information enquiries",
+        "for medical enquiries",
+        "med info",
+    ]
+    has_medical = any(phrase in text for phrase in medical_variants)
+
     ok = has_email or has_phone or has_medical
     detail = "Contact info present." if ok else "No medical contact email/phone or 'medical information' text found."
     return GradeItem(
@@ -299,7 +324,7 @@ def rule_contact_info_present(soup: BeautifulSoup, raw_html: str, brief: Campaig
         label="Medical contact / medical information present",
         passed=ok,
         detail=detail,
-        severity=Severity.BLOCKING,
+        severity=Severity.WARNING,
     )
 
 
