@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLR Draft Pipeline</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="navbar">
+        MLR Pipeline Operations
+    </div>
+
+    <div class="container">
+        <!-- Sidebar Configuration -->
+        <aside class="sidebar">
+            <h3>Configuration</h3>
+            <form id="configForm">
+                <label>Channel
+                    <select id="channel" name="channel">
+                        <option value="email">Email</option>
+                        <option value="web">Web</option>
+                    </select>
+                </label>
+                
+                <label id="emailTypeLabel">Email Type
+                    <select id="email_type" name="email_type">
+                        <option value="mass">Mass</option>
+                        <option value="1:1">1:1</option>
+                    </select>
+                </label>
+
+                <label>Market
+                    <input type="text" id="market" name="market" value="UK" required>
+                </label>
+
+                <label>Audience
+                    <input type="text" id="audience" name="audience" value="HCP" required>
+                </label>
+
+                <label>Brand
+                    <input type="text" id="brand" name="brand" value="Dovato" required>
+                </label>
+
+                <label>Classification
+                    <select id="classification" name="classification">
+                        <option value="unbranded">Unbranded Disease Awareness</option>
+                        <option value="branded">Branded</option>
+                    </select>
+                </label>
+
+                <label>Objective
+                    <textarea id="objective" name="objective" rows="3" required>Pre-launch HIV treatment awareness</textarea>
+                </label>
+
+                <label style="display:flex; align-items:center; gap:0.5rem; font-weight:normal;">
+                    <input type="checkbox" id="run_soft_review" name="run_soft_review" checked style="width:auto;margin:0;">
+                    Run Soft Review (AI)
+                </label>
+
+                <button type="submit" id="generateBtn">Run Generation</button>
+            </form>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="card">
+                <h3>Verification Pipeline</h3>
+                <div class="log-console" id="logConsole">
+                    <!-- Logs stream here -->
+                </div>
+            </div>
+
+            <div class="card" id="resultsCard" style="display: none;">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="preview">Live Preview</button>
+                    <button class="tab-btn" data-tab="audit">Audit & Grades</button>
+                    <button class="tab-btn" data-tab="code">Raw HTML</button>
+                </div>
+
+                <div id="preview" class="tab-content active">
+                    <iframe id="previewFrame" style="width:100%; height:600px; border:1px solid var(--border-color); border-radius:4px;"></iframe>
+                </div>
+
+                <div id="audit" class="tab-content">
+                    <table id="auditTable">
+                        <thead>
+                            <tr>
+                                <th>Rule</th>
+                                <th>Status</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="code" class="tab-content">
+                    <pre style="background:#f6f8fa; padding:1rem; border-radius:4px; overflow-x:auto;"><code id="rawCodeBlock"></code></pre>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3>Recent Drafts</h3>
+                <table id="historyTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Market</th>
+                            <th>Audience</th>
+                            <th>Compliance</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- History rows -->
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
