@@ -36,7 +36,10 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core.schema import CampaignBrief, Channel, EmailType, ContentClassification, Severity
+from core.schema import Severity
+from ui.sidebar import render_sidebar
+from ui.dashboard import highlight_flagged_claims, render_verification_diff, render_status_card
+from ui.history import save_draft_metadata, load_draft_history, render_recent_drafts
 from core.llm_client import LLMClient
 from pipeline.pipeline_langgraph import build_graph
 
@@ -73,177 +76,16 @@ st.markdown("""
 
 # --- Helper functions (history + inline highlighting) ---
 
-def highlight_flagged_claims(html: str, report) -> str:
-    """Wrap any quoted phrase referenced in a failed/warned audit item's
-    detail text in a <mark> tag, so the offending copy is visible directly
-    inside the draft preview instead of only in the side audit panel.
-
-    components.html() renders in its own sandboxed iframe, so the styling
-    for the <mark> tags has to be injected into this HTML string itself —
-    the app's main <style> block above won't reach inside that iframe.
-    """
-    highlighted = html
-    for item in report.items:
-        if item.passed:
-            continue
-        css_class = "mlr-flag-fail" if item.severity == Severity.BLOCKING else "mlr-flag-warn"
-        quotes = re.findall(r'"([^"\n]{3,80})"', item.detail or "")
-        for q in quotes:
-            if q and q in highlighted:
-                highlighted = highlighted.replace(
-                    q, f'<mark class="{css_class}" title="{item.label}">{q}</mark>', 1
-                )
-    style_snippet = """
-    <style>
-    mark.mlr-flag-fail{background:rgba(244,63,94,0.25);color:#f43f5e;padding:0 2px;border-radius:3px;border-bottom:2px solid #f43f5e;}
-    mark.mlr-flag-warn{background:rgba(245,158,11,0.25);color:#f59e0b;padding:0 2px;border-radius:3px;border-bottom:2px solid #f59e0b;}
-    </style>
-    """
-    return style_snippet + highlighted
-
-
-def save_draft_metadata(brief, report, iteration, elapsed, output_filename, passed, failed, warned, total):
-    """Persist a small JSON sidecar next to each generated draft so the
-    'Recent Drafts' section below can list history across sessions,
-    instead of only showing the single most recent run."""
-    out_dir = Path("outputs")
-    out_dir.mkdir(exist_ok=True)
-    existing = list(out_dir.glob("*.json"))
-    draft_id = f"#{1200 + len(existing) + 1}"
-    meta = {
-        "id": draft_id,
-        "channel": brief.channel,
-        "type": brief.email_type or "-",
-        "market": brief.market,
-        "audience": brief.audience,
-        "brand": brief.brand,
-        "objective": brief.objective,
-        "classification": brief.classification,
-        "status": "Draft" if report.all_passed else "Blocked",
-        "compliance": f"{passed}/{total}",
-        "iterations": iteration,
-        "time_taken": f"{elapsed:.1f}s",
-        "created_at": datetime.now().strftime("%b %d, %Y %I:%M %p"),
-        "html_file": output_filename,
-    }
-    meta_path = out_dir / f"{Path(output_filename).stem}.json"
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    return meta
-
-
-def load_draft_history():
-    out_dir = Path("outputs")
-    if not out_dir.exists():
-        return []
-    records = []
-    for jf in sorted(out_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-        try:
-            records.append(json.loads(jf.read_text(encoding="utf-8")))
-        except Exception:
-            continue
-    return records
-
-
-def render_verification_diff(snapshot: dict[str, list[str]]) -> None:
-    if not snapshot:
-        return
-    rows = []
-    if snapshot.get("rectified_rules"):
-        rows.append(("Rectified", snapshot["rectified_rules"], "delta-pass"))
-    if snapshot.get("still_failing"):
-        rows.append(("Still failing", snapshot["still_failing"], "delta-warn"))
-    if snapshot.get("new_failures"):
-        rows.append(("New failures", snapshot["new_failures"], "delta-fail"))
-    if not rows:
-        st.markdown("*No rule changes detected in this iteration.*")
-        return
-    table_rows = "".join(
-        f"<tr><th>{label}</th><td class='delta-cell {cls}'>{', '.join(values)}</td></tr>"
-        for label, values, cls in rows
-    )
-    st.markdown(f"""
-    <table class="delta-grid">
-        {table_rows}
-    </table>
-    """, unsafe_allow_html=True)
-
-
-def render_recent_drafts():
-    st.markdown('<div class="history-heading">📋 Recent Drafts</div>', unsafe_allow_html=True)
-    records = load_draft_history()
-    if not records:
-        st.caption("No drafts generated yet — your history will appear here after your first run.")
-        return
-    df = pd.DataFrame(records)
-    df = df.rename(columns={
-        "id": "ID", "channel": "Channel", "type": "Type", "market": "Market",
-        "audience": "Audience", "objective": "Objective", "compliance": "Compliance",
-        "status": "Status", "iterations": "Iterations", "created_at": "Created At",
-    })
-    display_cols = ["ID", "Channel", "Type", "Market", "Audience", "Objective",
-                     "Compliance", "Status", "Iterations", "Created At"]
-    display_cols = [c for c in display_cols if c in df.columns]
-    st.dataframe(df[display_cols].head(10), use_container_width=True, hide_index=True)
-
-
-# --- Sidebar Configuration ---
-with st.sidebar:
-    st.markdown("## ⚙️ Campaign Configuration")
-
-    with st.form("brief_form"):
-        channel = st.selectbox("📡 Channel", [c.value for c in Channel], help="Structural switch — changes layout target.")
-        email_type = st.selectbox("✉️ Email type", [e.value for e in EmailType]) if channel == "email" else None
-
-        st.divider()
-        market = st.text_input("🌍 Market", "UK", help="E.g., UK, US, EU. Unknowns fall back to AI classification.")
-        audience = st.text_input("👥 Audience", "HCP", help="E.g., HCP, Patient.")
-        brand = st.text_input("💊 Brand", "Dovato", help="Known: Dovato, Nucala, Trelegy, Shingrix.")
-        classification = st.selectbox("🏷️ Classification", [c.value for c in ContentClassification])
-
-        st.divider()
-        objective = st.text_area("🎯 Objective", "Pre-launch HIV treatment awareness", height=80)
-        uploaded_files = st.file_uploader("📎 Upload images (optional)", accept_multiple_files=True, type=["png", "jpg", "jpeg", "gif"])
-        run_soft = st.checkbox("🔍 Run soft review (AI)", value=True, help="Runs 1 extra subjective AI call if structural checks pass.")
-
-        submitted = st.form_submit_button("Generate Draft 🚀", use_container_width=True)
-
-
 # --- Pipeline Execution ---
-if submitted:
-    image_map = {}
-    if uploaded_files:
-        for f in uploaded_files:
-            b64 = base64.b64encode(f.read()).decode("utf-8")
-            image_map[f.name] = f"data:{f.type};base64,{b64}"
+brief, run_soft = render_sidebar()
 
-    brief = CampaignBrief(
-        channel=channel, email_type=email_type, market=market, audience=audience,
-        brand=brand, objective=objective, classification=classification,
-        uploaded_images=image_map
-    )
+if brief is not None:
 
     status_card = st.empty()
     pipeline_log = st.empty()
     node_icons = {"resolve": "🔍", "generate": "✨", "grade": "🛡️", "soft_review": "💬"}
 
-    def render_status_card(title: str, status: str = "running", detail: str = "Live verification loop updates appear below as each stage completes."):
-        if status == "running":
-            type_class = "status-info"
-        elif status == "success":
-            type_class = "status-pass"
-        elif status == "warn":
-            type_class = "status-warn"
-        elif status == "error":
-            type_class = "status-fail"
-        else:
-            type_class = "status-pass"
-        status_card.markdown(f"""
-        <div class="status-card {type_class}" style="padding:1rem; margin-bottom:1rem;">
-            <strong>{title}</strong>
-            <div style="color:#8b949e; margin-top:0.35rem;">{detail}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    render_status_card("🧠 Running LangGraph pipeline...", "running")
+    render_status_card(status_card, "🧠 Running LangGraph pipeline...", "running")
     pipeline_steps = []
     iteration_history = []  # tracks pass/fail/warn counts across retries
     prev_failed_items = []
@@ -273,7 +115,7 @@ if submitted:
     try:
         client = LLMClient()
     except RuntimeError as e:
-        render_status_card("❌ Configuration Error", "error", "Missing Azure OpenAI credentials or incorrect configuration.")
+        render_status_card(status_card, "❌ Configuration Error", "error", "Missing Azure OpenAI credentials or incorrect configuration.")
         st.error(str(e))
         st.stop()
 
@@ -296,17 +138,17 @@ if submitted:
                 mi, ai = update["market_info"], update["audience_info"]
                 ui_log(f"Market → **{mi.body_name}** (source: {mi.source})", "resolve")
                 ui_log(f"Audience → **{'HCP' if ai.is_hcp else 'not HCP'}** (source: {ai.source})", "resolve")
-                render_status_card("🧠 Resolution complete", "running", f"Resolved market and audience for the first draft.")
+                render_status_card(status_card, "🧠 Resolution complete", "running", f"Resolved market and audience for the first draft.")
             elif node_name == "generate":
                 current_iteration = update.get("iteration", final_state.get("iteration", 0) + 1)
                 usage = client.last_usage or {}
                 kind = "generated" if current_iteration == 1 else "revised"
                 if current_iteration == 1:
-                    render_status_card(f"✨ Generation {current_iteration} complete", "running", "Now verifying the first draft against compliance rules.")
+                    render_status_card(status_card, f"✨ Generation {current_iteration} complete", "running", "Now verifying the first draft against compliance rules.")
                     ui_log(f"First draft generated (attempt {current_iteration}) — {usage.get('input_tokens','?')} in / {usage.get('output_tokens','?')} out tokens", "generate")
                 else:
                     failed_ids = [item.rule_id for item in prev_failed_items]
-                    render_status_card(f"✨ Revision {current_iteration} complete", "running", f"Draft revised to address {len(failed_ids)} previously failed rule(s). Verifying again.")
+                    render_status_card(status_card, f"✨ Revision {current_iteration} complete", "running", f"Draft revised to address {len(failed_ids)} previously failed rule(s). Verifying again.")
                     ui_log(f"Revised draft generated (attempt {current_iteration}) — fixing {', '.join(failed_ids)}", "generate")
             elif node_name == "grade":
                 report = update["grade_report"]
@@ -336,10 +178,10 @@ if submitted:
                 })
                 prev_failed_items = failed_items
                 if report.all_passed:
-                    render_status_card(f"✅ Generation {current_iteration} passed", "success", "All deterministic blocking checks passed. Soft review will run if enabled.")
+                    render_status_card(status_card, f"✅ Generation {current_iteration} passed", "success", "All deterministic blocking checks passed. Soft review will run if enabled.")
                     ui_log(f"Generation {current_iteration} passed all blocking checks.", "grade")
                 else:
-                    render_status_card(f"❌ Generation {current_iteration} failed", "error", f"Failed rules: {', '.join(failed_rules)}")
+                    render_status_card(status_card, f"❌ Generation {current_iteration} failed", "error", f"Failed rules: {', '.join(failed_rules)}")
                     ui_log(f"Generation {current_iteration} failed {snap_failed} blocking rule(s) and {snap_warned} warning(s).", "grade")
                     if rectified_rules or still_failing or new_failures:
                         sections = []
@@ -366,10 +208,10 @@ if submitted:
             elif node_name == "soft_review":
                 notes = update.get("soft_review_notes", [])
                 ui_log(f"**{len(notes)}** advisory note(s)" if notes else "No concerns flagged ✓", "soft_review")
-                render_status_card("💬 Soft review complete", "running", f"Soft review produced {len(notes)} advisory note(s).")
+                render_status_card(status_card, "💬 Soft review complete", "running", f"Soft review produced {len(notes)} advisory note(s).")
 
     except Exception as e:
-        render_status_card("❌ Pipeline Error", "error", "Pipeline failed with an error. See the message below.")
+        render_status_card(status_card, "❌ Pipeline Error", "error", "Pipeline failed with an error. See the message below.")
         st.error(f"Pipeline failed with an error:\n\n```\n{type(e).__name__}: {e}\n```\n\nCheck your Azure credentials, network connection, and API quota.")
         st.stop()
 
@@ -377,7 +219,7 @@ if submitted:
     report = final_state["grade_report"]
     summary_title = f"{'✅' if report.all_passed else '⚠️'} Done — {final_state['iteration']} iteration(s), {elapsed:.1f}s"
     summary_detail = "This draft passed all blocking checks." if report.all_passed else "This draft has blocking/warning issues and is not ready for distribution."
-    render_status_card(summary_title, "success" if report.all_passed else "error", summary_detail)
+    render_status_card(status_card, summary_title, "success" if report.all_passed else "error", summary_detail)
 
     # --- Metrics Summary ---
     passed_count = sum(1 for i in report.items if i.passed)
