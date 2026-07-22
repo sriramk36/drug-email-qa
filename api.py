@@ -60,18 +60,28 @@ def get_recent_drafts():
 async def get_history():
     return get_recent_drafts()
 
-def _serialize_update(update: dict) -> dict:
-    safe = {}
-    for k, v in update.items():
-        if hasattr(v, "model_dump"):
-            safe[k] = v.model_dump()
-        elif hasattr(v, "__dict__"):
-            safe[k] = v.__dict__
-        elif type(v) in [str, int, float, bool, list, dict, type(None)]:
-            safe[k] = v
-        else:
-            safe[k] = str(v)
-    return safe
+import enum
+
+def custom_encoder(obj):
+    if isinstance(obj, set):
+        return list(obj)
+    if isinstance(obj, enum.Enum):
+        return obj.value
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "dict"):
+        return obj.dict()
+    if hasattr(obj, "__dict__"):
+        # Don't try to serialize deep complex objects like AzureOpenAI clients
+        if obj.__class__.__name__ in ("AzureOpenAI", "AsyncAzureOpenAI", "Client", "LLMClient"):
+            return f"<{obj.__class__.__name__}>"
+        return obj.__dict__
+    return str(obj)
+
+def filter_update(update: dict) -> dict:
+    """Remove backend-only objects that the frontend doesn't need and can't be cleanly serialized."""
+    return {k: v for k, v in update.items() if k not in ("client", "brief")}
+
 
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
@@ -103,7 +113,7 @@ async def generate(req: GenerateRequest):
                 update = step[node_name]
                 final_state.update(update)
                 
-                yield f"data: {json.dumps({'node': node_name, 'update': _serialize_update(update)})}\n\n"
+                yield f"data: {json.dumps({'node': node_name, 'update': filter_update(update)}, default=custom_encoder)}\n\n"
                 await asyncio.sleep(0.01)
             
             html_raw = final_state.get("html", "")
@@ -133,9 +143,9 @@ async def generate(req: GenerateRequest):
                     "all_passed": report.all_passed,
                     "created_at": datetime.now().isoformat()
                 }
-                (Path("outputs") / f"{output_filename}.json").write_text(json.dumps(meta), encoding="utf-8")
+                (Path("outputs") / f"{output_filename}.json").write_text(json.dumps(meta, default=custom_encoder), encoding="utf-8")
                 
-            yield f"data: {json.dumps({'done': True, 'html': html_raw, 'report': report.model_dump() if report else {}, 'meta': meta})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'html': html_raw, 'report': report, 'meta': meta}, default=custom_encoder)}\n\n"
             
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
