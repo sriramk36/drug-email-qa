@@ -18,7 +18,7 @@ def test_soft_review_agent(mock_llm_client):
         target_audience="Patients",
         key_messages=["Test msg"],
         channel=Channel.EMAIL,
-        email_type=EmailType.NEWSLETTER
+        email_type=EmailType.MASS
     )
     
     html_content = "<html>Some draft content</html>"

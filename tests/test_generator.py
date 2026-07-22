@@ -18,7 +18,7 @@ def test_draft_generator(mock_llm_client):
         target_audience="HCPs",
         key_messages=["Test msg"],
         channel=Channel.EMAIL,
-        email_type=EmailType.NEWSLETTER
+        email_type=EmailType.MASS
     )
     ctx = GradingContext(
         market_info={"id": "US", "name": "United States", "rules": []},

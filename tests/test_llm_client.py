@@ -14,7 +14,7 @@ from core.schema import CampaignBrief, Channel, EmailType
 
 @pytest.fixture
 def mock_llm_client():
-    with patch("core.llm_client.AzureOpenAI") as MockAzureOpenAI:
+    with patch("openai.AzureOpenAI") as MockAzureOpenAI:
         mock_client = MockAzureOpenAI.return_value
         # Configure a dummy response
         mock_response = MagicMock()
@@ -32,7 +32,7 @@ def test_generate_draft(mock_llm_client):
         target_audience="HCPs",
         key_messages=["Test message"],
         channel=Channel.EMAIL,
-        email_type=EmailType.NEWSLETTER
+        email_type=EmailType.MASS
     )
     
     result = mock_llm_client.generate_draft(brief)
