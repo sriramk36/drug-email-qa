@@ -12,13 +12,12 @@ def mock_llm_client():
 
 def test_soft_review_agent(mock_llm_client):
     brief = CampaignBrief(
-        id="test-sr-1",
-        product_name="TestDrug",
-        indication="Testing SR",
-        target_audience="Patients",
-        key_messages=["Test msg"],
         channel=Channel.EMAIL,
-        email_type=EmailType.MASS
+        email_type=EmailType.MASS,
+        market="UK",
+        audience="Patients",
+        brand="TestDrug",
+        objective="Testing SR"
     )
     
     html_content = "<html>Some draft content</html>"
