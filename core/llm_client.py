@@ -82,7 +82,7 @@ class LLMClient:
                 azure_endpoint=endpoint,
                 api_version="2024-10-21",
             )
-        self._deployment = "gpt-4o-mini"
+        self._deployment = settings.azure_openai_deployment
         self._is_reasoning = _is_reasoning_model(self._deployment)
         logger.info(f"Initialized LLMClient with deployment: {self._deployment} (Reasoning: {self._is_reasoning})")
 
