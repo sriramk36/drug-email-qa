@@ -1,17 +1,16 @@
 import pytest
-from unittest.mock import patch, MagicMock
-from pipeline.generator import DraftGenerator
+from unittest.mock import MagicMock
+from pipeline.generator import generate
 from core.schema import CampaignBrief, Channel, EmailType
+from pipeline.grader import GradingContext
 
 @pytest.fixture
 def mock_llm_client():
-    with patch("pipeline.generator.LLMClient") as MockLLMClient:
-        mock_instance = MockLLMClient.return_value
-        mock_instance.generate_draft.return_value = "<html>Test Draft</html>"
-        yield mock_instance
+    mock_instance = MagicMock()
+    mock_instance.complete.return_value = "<html>Test Draft</html>"
+    return mock_instance
 
 def test_draft_generator(mock_llm_client):
-    generator = DraftGenerator()
     brief = CampaignBrief(
         id="test-gen-1",
         product_name="TestDrug",
@@ -21,8 +20,13 @@ def test_draft_generator(mock_llm_client):
         channel=Channel.EMAIL,
         email_type=EmailType.NEWSLETTER
     )
+    ctx = GradingContext(
+        market_info={"id": "US", "name": "United States", "rules": []},
+        tokens={"company": "TestCo", "primary": "#000", "secondary": "#fff", "ae_report_line": "Call AE", "pi_link_placeholder": "PI here"}
+    )
     
-    result = generator.generate(brief)
+    result = generate(brief, mock_llm_client, ctx)
     
     assert result == "<html>Test Draft</html>"
-    mock_llm_client.generate_draft.assert_called_once_with(brief)
+    mock_llm_client.complete.assert_called_once()
+

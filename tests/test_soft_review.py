@@ -1,17 +1,16 @@
 import pytest
-from unittest.mock import patch
-from pipeline.soft_review import SoftReviewAgent
+from unittest.mock import MagicMock
+from pipeline.soft_review import soft_review
 from core.schema import CampaignBrief, Channel, EmailType
 
 @pytest.fixture
 def mock_llm_client():
-    with patch("pipeline.soft_review.LLMClient") as MockLLMClient:
-        mock_instance = MockLLMClient.return_value
-        mock_instance.soft_review.return_value = "This looks good, but could be friendlier."
-        yield mock_instance
+    mock_instance = MagicMock()
+    # It should return a JSON array string since json.loads(text) is used
+    mock_instance.complete.return_value = '[{"concern": "Tone", "detail": "This looks good, but could be friendlier."}]'
+    return mock_instance
 
 def test_soft_review_agent(mock_llm_client):
-    agent = SoftReviewAgent()
     brief = CampaignBrief(
         id="test-sr-1",
         product_name="TestDrug",
@@ -24,10 +23,9 @@ def test_soft_review_agent(mock_llm_client):
     
     html_content = "<html>Some draft content</html>"
     
-    result = agent.review(html_content, brief)
+    result = soft_review(html_content, brief, mock_llm_client)
     
-    assert result == "This looks good, but could be friendlier."
-    mock_llm_client.soft_review.assert_called_once_with(
-        html_content, 
-        brief_context=brief.model_dump_json()
-    )
+    assert len(result) == 1
+    assert result[0].concern == "Tone"
+    assert result[0].detail == "This looks good, but could be friendlier."
+    mock_llm_client.complete.assert_called_once()
