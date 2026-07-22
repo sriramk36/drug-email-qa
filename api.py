@@ -10,19 +10,22 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from core.schema import CampaignBrief, Channel, EmailType, ContentClassification, Severity
+from core.schema import CampaignBrief, Channel, EmailType, ContentClassification, Severity, ImageMap
 from core.llm_client import LLMClient
+from core.config import settings
 from pipeline.pipeline_langgraph import build_graph
 
-app = FastAPI(title="MLR Pipeline API")
+app = FastAPI(title="MLR Pipeline API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.get_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+file_lock = asyncio.Lock()
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
@@ -35,15 +38,15 @@ async def serve_frontend():
 
 
 class GenerateRequest(BaseModel):
-    channel: str
-    email_type: Optional[str] = None
+    channel: Channel
+    email_type: Optional[EmailType] = None
     market: str
     audience: str
     brand: str
     objective: str
-    classification: str
+    classification: ContentClassification
     run_soft_review: bool = True
-    images: dict[str, str] = {}
+    images: ImageMap = {}
 
 from dateutil import parser as date_parser
 
@@ -71,6 +74,10 @@ def get_recent_drafts():
 @app.get("/api/history")
 async def get_history():
     return get_recent_drafts()
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "version": app.version}
 
 import enum
 
@@ -205,33 +212,39 @@ async def generate(req: GenerateRequest):
                 failed_count = sum(1 for i in report.items if not i.passed and i.severity.value == "blocking")
                 warn_count = sum(1 for i in report.items if not i.passed and i.severity.value == "warning")
                 
-                out_dir = Path("outputs")
-                out_dir.mkdir(exist_ok=True)
-                existing = list(out_dir.glob("*.json"))
-                draft_id = f"#{1200 + len(existing) + 1}"
-                
-                output_filename = f"{brief.market}_{brief.audience}_{brief.brand}_{brief.channel}_{brief.classification}.html".replace(" ", "_").lower()
-                output_path = out_dir / output_filename
-                output_path.write_text(html_raw, encoding="utf-8")
-                
-                meta = {
-                    "id": draft_id,
-                    "channel": brief.channel,
-                    "type": brief.email_type or "-",
-                    "market": brief.market,
-                    "audience": brief.audience,
-                    "brand": brief.brand,
-                    "objective": brief.objective,
-                    "iterations": final_state.get("iteration", 0),
-                    "passed": passed_count,
-                    "failed": failed_count,
-                    "warned": warn_count,
-                    "all_passed": report.all_passed,
-                    "elapsed": f"{elapsed:.1f}",
-                    "created_at": datetime.now().isoformat()
-                }
-                json_filename = output_filename.replace(".html", "") + ".json"
-                (Path("outputs") / json_filename).write_text(json.dumps(meta, default=custom_encoder), encoding="utf-8")
+                async with file_lock:
+                    out_dir = Path("outputs")
+                    out_dir.mkdir(exist_ok=True)
+                    existing = list(out_dir.glob("*.json"))
+                    draft_id = f"#{1200 + len(existing) + 1}"
+                    
+                    output_filename = f"{brief.market}_{brief.audience}_{brief.brand}_{brief.channel}_{brief.classification}.html".replace(" ", "_").lower()
+                    
+                    # Ensure filename is unique by appending timestamp if it already exists
+                    if (out_dir / output_filename).exists():
+                        output_filename = output_filename.replace(".html", f"_{int(time.time())}.html")
+                        
+                    output_path = out_dir / output_filename
+                    output_path.write_text(html_raw, encoding="utf-8")
+                    
+                    meta = {
+                        "id": draft_id,
+                        "channel": brief.channel.value if isinstance(brief.channel, enum.Enum) else brief.channel,
+                        "type": brief.email_type.value if isinstance(brief.email_type, enum.Enum) else brief.email_type,
+                        "market": brief.market,
+                        "audience": brief.audience,
+                        "brand": brief.brand,
+                        "objective": brief.objective,
+                        "iterations": final_state.get("iteration", 0),
+                        "passed": passed_count,
+                        "failed": failed_count,
+                        "warned": warn_count,
+                        "all_passed": report.all_passed,
+                        "elapsed": f"{elapsed:.1f}",
+                        "created_at": datetime.now().isoformat()
+                    }
+                    json_filename = output_filename.replace(".html", "") + ".json"
+                    (out_dir / json_filename).write_text(json.dumps(meta, default=custom_encoder), encoding="utf-8")
                 
             soft_review_notes_raw = final_state.get("soft_review_notes", []) or []
             soft_notes_serializable = [

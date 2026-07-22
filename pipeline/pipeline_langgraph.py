@@ -37,9 +37,9 @@ if (hasattr(sys.stdout, 'encoding')
     sys.stdout.reconfigure(encoding='utf-8')
 
 from typing import Optional, TypedDict, Any
-
 from langgraph.graph import StateGraph, END
-
+from core.logger import get_logger
+from core.exceptions import GenerationError, PipelineError
 from core.brand_config import get_brand_tokens
 from core.schema import CampaignBrief, PipelineResult, GradeReport, SoftReviewNote, Severity
 from core.llm_client import LLMClient
@@ -71,6 +71,8 @@ class PipelineState(TypedDict, total=False):
     soft_review_notes: list[SoftReviewNote]
 
 
+logger = get_logger(__name__)
+
 def node_resolve(state: PipelineState) -> dict:
     brief, client = state["brief"], state["client"]
     market_info = resolve_market(brief.market, client=client)
@@ -83,10 +85,16 @@ def node_resolve(state: PipelineState) -> dict:
 def node_generate(state: PipelineState) -> dict:
     brief, client, ctx = state["brief"], state["client"], state["ctx"]
     iteration = state.get("iteration", 0) + 1
-    if iteration == 1:
-        html = gen_generate(brief, client, ctx)
-    else:
-        html = gen_revise(brief, state["html"], state["grade_report"], client, ctx)
+    logger.info(f"Generating draft, iteration {iteration}")
+    try:
+        if iteration == 1:
+            html = gen_generate(brief, client, ctx)
+        else:
+            html = gen_revise(brief, state["html"], state["grade_report"], client, ctx)
+    except Exception as e:
+        if not isinstance(e, PipelineError):
+            raise GenerationError(f"Draft generation failed: {e}") from e
+        raise
     return {"html": html, "iteration": iteration}
 
 
@@ -169,7 +177,7 @@ if __name__ == "__main__":
     for step in graph.stream({"brief": brief, "client": client, "run_soft_review": True,
                                "iteration": 0, "prev_failed_ids": None}):
         node_name = list(step.keys())[0]
-        print(f"[node: {node_name}] completed")
+        logger.info(f"[node: {node_name}] completed")
         final_state.update(step[node_name])
 
     print(f"\nIterations used: {final_state['iteration']}")

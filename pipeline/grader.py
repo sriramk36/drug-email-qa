@@ -1,23 +1,7 @@
 """
-Grader — Loop 2 (verification loop) in loop-engineering terms.
-
-Deliberately NOT an LLM call for the blocking rules. Structural
-compliance checks (is the AE box there, is the audience tag there, did
-the brand name leak into unbranded copy) are things regex/DOM parsing
-can check exactly and reproducibly. Saving the LLM for judgment calls
-keeps the audit trail auditable — a human reviewer can see precisely
-why something failed, not just an LLM's opinion that it failed.
-
-IMPORTANT: market/audience resolution (regulatory.py) can now involve
-an LLM call for genuinely unrecognized free-text input. That call
-happens exactly ONCE per pipeline run, upstream, in pipeline.py — not
-here. Rules receive the already-resolved MarketInfo/AudienceInfo as
-plain data via GradingContext. This keeps the grader's core guarantee
-intact: grading itself never makes a network call, regardless of how
-the inputs it's checking against were resolved.
-
-Every rule function has the same signature:
-    (soup: BeautifulSoup, raw_html: str, brief: CampaignBrief, ctx: GradingContext) -> GradeItem
+Grader node for the MLR pipeline.
+Deterministically evaluates generated HTML against structural, brand, and
+compliance rules without making LLM calls.
 """
 
 from __future__ import annotations

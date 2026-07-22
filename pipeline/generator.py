@@ -1,10 +1,7 @@
 """
-Generator — Loop 1 (the "actor") in loop-engineering terms.
-
-Turns a CampaignBrief into a full HTML draft. In revision mode, it's
-handed the previous draft plus the specific FAILED grade items and
-asked to patch only what's needed — cheaper and more stable than
-regenerating from scratch every iteration.
+Generator node for the MLR pipeline.
+Turns a CampaignBrief into a full HTML draft, or patches an existing draft
+based on GradeReport feedback during revision cycles.
 """
 
 from __future__ import annotations
