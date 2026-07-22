@@ -1,20 +1,7 @@
 """
-Free-text resolution layer — dictionary first, then a persistent cache,
-then an LLM fallback, in that order. Every layer costs strictly more
-than the one before it, so cheap/instant paths are always tried first:
-
-  dictionary lookup (free, instant, covers ~most real traffic)
-    -> disk cache (free after the first time any given input is seen)
-      -> LLM call (only for input truly nobody has resolved before)
-
-This exists because the input became free text ("Ireland", "formulary
-committee") instead of a closed dropdown — a static dictionary can't
-cover the open-ended cases, but paying for an LLM call on every single
-request (including the ones the dictionary already handles) would be
-wasteful. The grader itself never triggers any of this: resolution
-happens exactly once per pipeline run (see pipeline.py), and the
-resolved MarketInfo/AudienceInfo gets threaded through to both the
-generator and the grader as plain data, not re-derived repeatedly.
+Free-text resolution layer for market and audience inputs.
+Resolves ambiguous inputs into structured MarketInfo and AudienceInfo objects
+using a dictionary, cache, and LLM fallback sequence.
 """
 
 from __future__ import annotations

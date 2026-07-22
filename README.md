@@ -1,5 +1,19 @@
 # Pharma Marketing Draft Pipeline (prototype)
 
+## Architecture Workflow
+
+```mermaid
+graph TD
+    U[User Input / UI] -->|Campaign Brief| A(FastAPI / LangGraph)
+    A --> B{Resolve Market/Audience}
+    B -->|Resolved Context| C[Generator LLM]
+    C -->|HTML Draft| D[Deterministic Grader]
+    D -->|Passed| E[Soft Review LLM]
+    D -->|Failed| F{Iterate?}
+    F -->|Yes| C
+    F -->|No| E
+    E --> G[Final Output & JSON Log]
+```
 A generate → grade → revise pipeline for pharma email/web marketing
 **drafts**. Built around three of the four loop patterns from
 [LangChain's "Art of Loop Engineering"](https://www.langchain.com/blog/the-art-of-loop-engineering):
@@ -234,20 +248,23 @@ python analyze_traces.py
 
 ## File map
 
-| File | Role |
+| File / Directory | Role |
 |---|---|
-| `schema.py` | `CampaignBrief`, `GradeItem`, `GradeReport`, `PipelineResult`, `SoftReviewNote` — the data contracts |
-| `brand_config.py` | Per-brand color tokens + AE reporting line + PI placeholder (placeholders, not real brand-guideline values) |
-| `regulatory.py` | Free-text market/audience resolution: dictionary → disk cache → LLM fallback |
-| `prompts/generator_system.md` | The Generator's system prompt — market-agnostic on purpose, see Token cost strategy above |
-| `llm_client.py` | Azure OpenAI client only — no fallback provider, no exception-swallowing, handles reasoning-model params |
-| `generator.py` | Brief → HTML, plus revision mode |
-| `grader.py` | 11 deterministic structural rules + `GradingContext`, `BeautifulSoup`-based |
-| `soft_review.py` | Optional 1-call LLM advisory pass for subjective concerns, never blocking |
-| `pipeline.py` | Orchestrates resolve → generate → grade → revise → soft-review as a plain Python loop |
-| `pipeline_langgraph.py` | Same orchestration, as a LangGraph `StateGraph` |
-| `trace_logger.py` / `analyze_traces.py` | Append-only run log + failure-rate and resolution-cost analysis |
-| `app.py` | Streamlit UI — runs on `pipeline_langgraph.py` via `.stream()`, soft review is an off-by-default checkbox |
+| `core/schema.py` | `CampaignBrief`, `GradeItem`, `GradeReport`, `PipelineResult`, `SoftReviewNote` — the data contracts |
+| `core/config.py` | Centralized application configuration utilizing `pydantic-settings` |
+| `core/logger.py` | Structured application logging configuration |
+| `core/exceptions.py` | Custom error types like `GenerationError` for control flow |
+| `core/regulatory.py` | Free-text market/audience resolution: dictionary → disk cache → LLM fallback |
+| `core/llm_client.py` | Azure OpenAI client only — handles reasoning-model params |
+| `pipeline/generator.py` | Brief → HTML, plus revision mode |
+| `pipeline/grader.py` | 11 deterministic structural rules + `GradingContext`, `BeautifulSoup`-based |
+| `pipeline/soft_review.py` | Optional 1-call LLM advisory pass for subjective concerns |
+| `pipeline/pipeline_langgraph.py` | Orchestrates resolve → generate → grade → revise → soft-review via `StateGraph` |
+| `api.py` | FastAPI backend to run generation requests asynchronously |
+| `app.py` | Streamlit UI — orchestrates `ui/` modules and runs on `pipeline_langgraph.py` |
+| `ui/` | Modular Streamlit UI components (`sidebar.py`, `dashboard.py`, `history.py`) |
+| `docs/architecture.md` | Detailed architectural descriptions for the Generator, Grader, and Regulatory Engine |
+| `prompts/generator_system.md` | The Generator's system prompt |
 
 ## Validated against your uploaded templates
 

@@ -12,6 +12,8 @@ from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
+ImageMap = dict[str, str]
+
 from core.regulatory import resolve_market, is_hcp_audience
 
 
@@ -63,7 +65,7 @@ class CampaignBrief(BaseModel):
     brand: str = Field(..., description="e.g. Dovato, Nucala, Trelegy, Shingrix")
     objective: str = Field(..., description="e.g. 'Pre-launch HIV treatment awareness'")
     classification: ContentClassification = ContentClassification.UNBRANDED_DISEASE_AWARENESS
-    uploaded_images: dict[str, str] = Field(default_factory=dict, description="Dictionary mapping filenames to base64 data URIs of uploaded images")
+    uploaded_images: ImageMap = Field(default_factory=dict, description="Dictionary mapping filenames to base64 data URIs of uploaded images")
 
     def regulatory_body(self) -> str:
         """Convenience only — dictionary/cache lookup, no LLM fallback (no client

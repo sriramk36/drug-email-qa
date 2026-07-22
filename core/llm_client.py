@@ -39,15 +39,16 @@ Env vars (all required, no optional alternates):
 
 from __future__ import annotations
 
-import hashlib
-import json
-import os
+from core.config import settings
+from core.logger import get_logger
+from core.exceptions import GenerationError
 import re
-from dotenv import load_dotenv
+import json
+import hashlib
 import openai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-load_dotenv()
+logger = get_logger(__name__)
 
 
 def _is_reasoning_model(deployment_name: str) -> bool:
@@ -61,34 +62,29 @@ def _is_reasoning_model(deployment_name: str) -> bool:
 
 class LLMClient:
     def __init__(self):
-        if not (os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT")):
-            raise RuntimeError(
-                "Missing Azure OpenAI credentials. Set AZURE_OPENAI_API_KEY and "
-                "AZURE_OPENAI_ENDPOINT (and optionally AZURE_OPENAI_API_VERSION / "
-                "AZURE_OPENAI_DEPLOYMENT) as environment variables. This project only "
-                "supports Azure OpenAI — there is no fallback to another provider."
-            )
-
         self.provider = "azure"
-        self.last_usage = None  # populated after each complete() call; pipeline.py can log it
+        self.last_usage = None
+        
+        endpoint = settings.azure_openai_endpoint
+        api_key = settings.azure_openai_api_key
 
-        endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         if endpoint.endswith("/v1") or endpoint.endswith("/v1/"):
             from openai import OpenAI
             self._client = OpenAI(
-                api_key=os.environ["AZURE_OPENAI_API_KEY"],
+                api_key=api_key,
                 base_url=endpoint,
-                default_headers={"api-key": os.environ["AZURE_OPENAI_API_KEY"]}
+                default_headers={"api-key": api_key}
             )
         else:
             from openai import AzureOpenAI
             self._client = AzureOpenAI(
-                api_key=os.environ["AZURE_OPENAI_API_KEY"],
+                api_key=api_key,
                 azure_endpoint=endpoint,
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+                api_version="2024-10-21",
             )
-        self._deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+        self._deployment = "gpt-4o-mini"
         self._is_reasoning = _is_reasoning_model(self._deployment)
+        logger.info(f"Initialized LLMClient with deployment: {self._deployment} (Reasoning: {self._is_reasoning})")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -124,13 +120,17 @@ class LLMClient:
             kwargs["max_completion_tokens"] = max_tokens
             kwargs["reasoning_effort"] = "low"
 
-        # The tenacity decorator handles retries for transient errors.
-        resp = self._client.chat.completions.create(**kwargs)
+        try:
+            resp = self._client.chat.completions.create(**kwargs)
+        except Exception as e:
+            logger.error(f"API call failed: {e}")
+            raise GenerationError(f"API call failed: {e}") from e
 
         content = resp.choices[0].message.content
         if not content:
             finish_reason = resp.choices[0].finish_reason
-            raise RuntimeError(
+            logger.error(f"Empty content returned from {self._deployment}. finish_reason={finish_reason}")
+            raise GenerationError(
                 f"Model '{self._deployment}' returned empty content (finish_reason="
                 f"{finish_reason!r}). If this is a reasoning model, it likely spent the "
                 f"entire max_completion_tokens budget on hidden reasoning tokens with "
@@ -150,4 +150,6 @@ class LLMClient:
         self.last_model = self._deployment
         self.last_prompt_hash = hashlib.sha256((system + user).encode("utf-8")).hexdigest()
         self.last_input_hash = hashlib.sha256(user.encode("utf-8")).hexdigest()
+        
+        logger.info(f"LLM Call successful. Tokens: {usage_dict}")
         return content
