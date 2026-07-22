@@ -12,13 +12,12 @@ def mock_llm_client():
 
 def test_draft_generator(mock_llm_client):
     brief = CampaignBrief(
-        id="test-gen-1",
-        product_name="TestDrug",
-        indication="Testing Generation",
-        target_audience="HCPs",
-        key_messages=["Test msg"],
         channel=Channel.EMAIL,
-        email_type=EmailType.MASS
+        email_type=EmailType.MASS,
+        market="US",
+        audience="HCPs",
+        brand="TestDrug",
+        objective="Testing Generation"
     )
     ctx = GradingContext(
         market_info={"id": "US", "name": "United States", "rules": []},

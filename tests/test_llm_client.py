@@ -24,20 +24,6 @@ def mock_llm_client():
         
         yield LLMClient()
 
-def test_generate_draft(mock_llm_client):
-    brief = CampaignBrief(
-        id="test-123",
-        product_name="TestDrug",
-        indication="Testing",
-        target_audience="HCPs",
-        key_messages=["Test message"],
-        channel=Channel.EMAIL,
-        email_type=EmailType.MASS
-    )
-    
-    result = mock_llm_client.generate_draft(brief)
-    assert result == "Test content"
-
-def test_soft_review(mock_llm_client):
-    result = mock_llm_client.soft_review("Draft HTML content")
+def test_complete(mock_llm_client):
+    result = mock_llm_client.complete(system="System Prompt", user="User Prompt")
     assert result == "Test content"
