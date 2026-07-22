@@ -7,4 +7,4 @@ python-dotenv>=1.0  # .env loading in llm_client.py
 fastapi>=0.110    # REST API endpoint (scripts/api.py)
 uvicorn>=0.29     # ASGI server for the FastAPI endpoint
 tenacity>=8.4
- 
+pydantic-settings>=2.0
