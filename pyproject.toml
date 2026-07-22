@@ -5,20 +5,23 @@ description = "Pharma marketing draft pipeline — generates compliance-checked 
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pydantic>=2.0",
+    "pydantic>=2.7",
     "beautifulsoup4>=4.12",
-    "streamlit>=1.35",
-    "openai>=1.55",
-    "langgraph>=1.0",
+    "streamlit>=1.40",
+    "openai>=1.57",
+    "langgraph>=0.3",
     "python-dotenv>=1.0",
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "tenacity>=8.4",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-mock>=3.14",
+    "ruff>=0.8.0",
+    "mypy>=1.11",
 ]
 
 [build-system]
@@ -30,3 +33,15 @@ include = ["core*", "pipeline*", "scripts*", "prompts*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+strict = true
