@@ -7,7 +7,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const generateBtn = document.getElementById("generateBtn");
     const resultsCard = document.getElementById("resultsCard");
     const previewFrame = document.getElementById("previewFrame");
-    const auditTable = document.getElementById("auditTable").querySelector("tbody");
     const rawCodeBlock = document.getElementById("rawCodeBlock");
     const historyTable = document.getElementById("historyTable").querySelector("tbody");
 
@@ -58,38 +57,83 @@ document.addEventListener("DOMContentLoaded", () => {
         logConsole.scrollTop = logConsole.scrollHeight;
     }
 
-    // Fetch history
+    // Fetch history + Pagination state
+    let historyData = [];
+    let historyCurrentPage = 1;
+    const historyRowsPerPage = 5;
+
     async function fetchHistory() {
         try {
             const res = await fetch("/api/history");
-            const data = await res.json();
-            historyTable.innerHTML = "";
-            data.forEach(row => {
-                const tr = document.createElement("tr");
-                const compBadgeClass = row.all_passed ? "pass" : "fail";
-                const complianceStr = `${row.passed || 0}/${(row.passed || 0) + (row.failed || 0) + (row.warned || 0)}`;
-                
-                const status = row.all_passed ? "Draft" : "Blocked";
-                const statusColor = row.all_passed ? "var(--success)" : "var(--danger)";
-                
-                tr.innerHTML = `
-                    <td>${row.id}</td>
-                    <td style="text-transform: capitalize;">${row.channel}</td>
-                    <td>${row.type || "-"}</td>
-                    <td>${row.market}</td>
-                    <td>${row.audience}</td>
-                    <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${row.objective}">${row.objective}</td>
-                    <td><span class="badge ${compBadgeClass}">${complianceStr}</span></td>
-                    <td style="color: ${statusColor}; font-weight: 600;">${status}</td>
-                    <td>${row.iterations || 1}</td>
-                    <td>${new Date(row.created_at).toLocaleString()}</td>
-                `;
-                historyTable.appendChild(tr);
-            });
+            historyData = await res.json();
+            historyCurrentPage = 1;
+            renderHistoryPage();
         } catch (e) {
             console.error("Failed to fetch history");
         }
     }
+
+    function renderHistoryPage() {
+        historyTable.innerHTML = "";
+        const paginationContainer = document.getElementById("historyPagination");
+        if (paginationContainer) paginationContainer.innerHTML = "";
+
+        if (historyData.length === 0) {
+            historyTable.innerHTML = "<tr><td colspan='10' style='text-align:center; padding: 2rem; color:var(--text-muted); font-style:italic;'>No drafts generated yet — your history will appear here.</td></tr>";
+            return;
+        }
+
+        const totalPages = Math.ceil(historyData.length / historyRowsPerPage);
+        const startIndex = (historyCurrentPage - 1) * historyRowsPerPage;
+        const pageData = historyData.slice(startIndex, startIndex + historyRowsPerPage);
+
+        pageData.forEach(row => {
+            const tr = document.createElement("tr");
+            const compBadgeClass = row.all_passed ? "pass" : "fail";
+            const complianceStr = `${row.passed || 0}/${(row.passed || 0) + (row.failed || 0) + (row.warned || 0)}`;
+            
+            const status = row.all_passed ? "Draft" : "Blocked";
+            const statusColor = row.all_passed ? "var(--success)" : "var(--danger)";
+            
+            tr.innerHTML = `
+                <td>${row.id}</td>
+                <td style="text-transform: capitalize;">${row.channel}</td>
+                <td>${row.type || "-"}</td>
+                <td>${row.market}</td>
+                <td>${row.audience}</td>
+                <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${row.objective}">${row.objective}</td>
+                <td><span class="badge ${compBadgeClass}">${complianceStr}</span></td>
+                <td style="color: ${statusColor}; font-weight: 600;">${status}</td>
+                <td>${row.iterations || 1}</td>
+                <td>${new Date(row.created_at).toLocaleString()}</td>
+            `;
+            historyTable.appendChild(tr);
+        });
+
+        if (totalPages > 1 && paginationContainer) {
+            const prevBtn = document.createElement("button");
+            prevBtn.className = "btn-sm btn-ghost";
+            prevBtn.innerHTML = "◀ Prev";
+            prevBtn.disabled = historyCurrentPage === 1;
+            prevBtn.onclick = () => { historyCurrentPage--; renderHistoryPage(); };
+            
+            const pageInfo = document.createElement("span");
+            pageInfo.style.fontSize = "0.85rem";
+            pageInfo.style.color = "var(--text-muted)";
+            pageInfo.innerHTML = `Page ${historyCurrentPage} of ${totalPages}`;
+
+            const nextBtn = document.createElement("button");
+            nextBtn.className = "btn-sm btn-ghost";
+            nextBtn.innerHTML = "Next ▶";
+            nextBtn.disabled = historyCurrentPage === totalPages;
+            nextBtn.onclick = () => { historyCurrentPage++; renderHistoryPage(); };
+
+            paginationContainer.appendChild(prevBtn);
+            paginationContainer.appendChild(pageInfo);
+            paginationContainer.appendChild(nextBtn);
+        }
+    }
+
     fetchHistory();
 
     // Generate submission

@@ -62,6 +62,8 @@ body {
     border-radius: 8px;
     padding: 1.75rem;
     height: fit-content;
+    max-height: calc(100vh - 5rem);
+    overflow-y: auto;
     box-shadow: var(--shadow-md);
     position: sticky;
     top: 2.5rem;

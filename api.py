@@ -45,6 +45,8 @@ class GenerateRequest(BaseModel):
     run_soft_review: bool = True
     images: dict[str, str] = {}
 
+from dateutil import parser as date_parser
+
 def get_recent_drafts():
     records = []
     outputs_dir = Path("outputs")
@@ -55,7 +57,15 @@ def get_recent_drafts():
             records.append(json.loads(json_file.read_text(encoding="utf-8")))
         except Exception:
             continue
-    records.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            
+    def parse_date(record):
+        date_str = record.get("created_at", "")
+        try:
+            return date_parser.parse(date_str)
+        except Exception:
+            return datetime.min
+
+    records.sort(key=parse_date, reverse=True)
     return records
 
 @app.get("/api/history")
