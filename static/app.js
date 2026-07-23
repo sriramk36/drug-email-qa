@@ -410,12 +410,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const classificationSelect = document.getElementById("classification");
     const brandLabelWrapper = document.getElementById("brandLabelWrapper");
+    const brandInput = document.getElementById("brand");
     
     function toggleBrandVisibility() {
         if (classificationSelect.value === "unbranded") {
             brandLabelWrapper.style.display = "none";
+            if (brandInput) brandInput.required = false;
         } else {
             brandLabelWrapper.style.display = "block";
+            if (brandInput) brandInput.required = true;
         }
     }
     
