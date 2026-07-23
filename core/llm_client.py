@@ -97,11 +97,13 @@ class LLMClient:
         reraise=True
     )
     def complete(self, system: str, user: str, max_tokens: int = 4000, images: list[str] = None) -> str:
-        if images:
+        if images and not self._is_reasoning:
             user_content = [{"type": "text", "text": user}]
             for b64 in images:
                 user_content.append({"type": "image_url", "image_url": {"url": b64}})
         else:
+            if images and self._is_reasoning:
+                logger.warning(f"Images were provided but {self._deployment} is a reasoning model. Images will be ignored.")
             user_content = user
 
         kwargs = dict(

@@ -472,6 +472,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 body: JSON.stringify(payload)
             });
 
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Server returned ${response.status}: ${errorText}`);
+            }
+
             if (!response.body) throw new Error("ReadableStream not supported");
             await handlePipelineStream(response);
             

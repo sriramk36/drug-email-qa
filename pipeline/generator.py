@@ -61,7 +61,8 @@ Return ONLY the HTML file contents. No preamble, no explanation, no markdown fen
 
 
 def generate(brief: CampaignBrief, client: LLMClient, ctx: GradingContext) -> str:
-    raw = client.complete(system=SYSTEM_PROMPT, user=_brief_prompt(brief, ctx), max_tokens=6000)
+    images = list(brief.uploaded_images.values()) if brief.uploaded_images else None
+    raw = client.complete(system=SYSTEM_PROMPT, user=_brief_prompt(brief, ctx), max_tokens=6000, images=images)
     return _extract_html(raw)
 
 
@@ -96,5 +97,6 @@ Brand tokens (unchanged from the original brief):
 
 Return ONLY the corrected full HTML file. No preamble, no markdown fences.
 """
-    raw = client.complete(system=SYSTEM_PROMPT, user=user_prompt, max_tokens=6000)
+    images = list(brief.uploaded_images.values()) if brief.uploaded_images else None
+    raw = client.complete(system=SYSTEM_PROMPT, user=user_prompt, max_tokens=6000, images=images)
     return _extract_html(raw)
