@@ -65,21 +65,28 @@ def generate(brief: CampaignBrief, client: LLMClient, ctx: GradingContext) -> st
     return _extract_html(raw)
 
 
-def revise(brief: CampaignBrief, previous_html: str, grade_report: GradeReport, client: LLMClient, ctx: GradingContext) -> str:
-    tokens = ctx.tokens
-    failed = grade_report.failed_items
-    failure_list = "\n".join(f"- [{i.rule_id}] {i.label}: {i.detail}" for i in failed)
-    user_prompt = f"""
-Here is the previous draft, which FAILED {len(failed)} check(s):
+from typing import Optional
 
-FAILED CHECKS:
-{failure_list}
+def revise(brief: CampaignBrief, previous_html: str, grade_report: Optional[GradeReport], client: LLMClient, ctx: GradingContext, human_feedback: Optional[str] = None) -> str:
+    tokens = ctx.tokens
+    
+    feedback_section = ""
+    if grade_report and grade_report.failed_items:
+        failed = grade_report.failed_items
+        failure_list = "\n".join(f"- [{i.rule_id}] {i.label}: {i.detail}" for i in failed)
+        feedback_section += f"\nFAILED CHECKS:\n{failure_list}\n\nPatch ONLY what's needed to fix the failed checks above."
+    
+    if human_feedback:
+        feedback_section += f"\nHUMAN REVIEWER FEEDBACK:\n{human_feedback}\n\nPrioritize these human changes while maintaining all previous brand rules."
+
+    user_prompt = f"""
+Here is the previous draft:
 
 PREVIOUS DRAFT HTML:
 {previous_html}
+{feedback_section}
 
-Patch ONLY what's needed to fix the failed checks above. Keep everything
-else — including any passing checks and existing copy — unchanged.
+Keep everything else — including any passing checks and existing copy — unchanged.
 Brand tokens (unchanged from the original brief):
 - Primary color: {tokens['primary']}
 - Secondary color: {tokens['secondary']}

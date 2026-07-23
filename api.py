@@ -79,6 +79,57 @@ async def get_history():
 async def health_check():
     return {"status": "ok", "version": app.version}
 
+@app.get("/api/analytics")
+async def get_analytics():
+    drafts = get_recent_drafts()
+    if not drafts:
+        return {"total_drafts": 0, "overall_pass_rate": 0, "avg_iterations": 0, "by_brand": {}}
+    
+    total = len(drafts)
+    passed = sum(1 for d in drafts if d.get("all_passed", False))
+    iterations = sum(d.get("iterations", 1) for d in drafts)
+    
+    by_brand = {}
+    for d in drafts:
+        b = d.get("brand") or "Unbranded"
+        if b not in by_brand:
+            by_brand[b] = {"total": 0, "passed": 0}
+        by_brand[b]["total"] += 1
+        if d.get("all_passed", False):
+            by_brand[b]["passed"] += 1
+            
+    for b in by_brand:
+        by_brand[b]["pass_rate"] = round((by_brand[b]["passed"] / by_brand[b]["total"]) * 100, 1)
+
+    return {
+        "total_drafts": total,
+        "overall_pass_rate": round((passed / total) * 100, 1),
+        "avg_iterations": round(iterations / total, 1),
+        "by_brand": by_brand
+    }
+
+class ReviewRequest(BaseModel):
+    status: str
+    comment: Optional[str] = None
+
+from fastapi import HTTPException
+
+@app.post("/api/drafts/{draft_id}/review")
+async def review_draft(draft_id: str, req: ReviewRequest):
+    draft_id_clean = draft_id.replace("%23", "#")
+    outputs_dir = Path("outputs")
+    for json_file in outputs_dir.glob("*.json"):
+        try:
+            data = json.loads(json_file.read_text(encoding="utf-8"))
+            if data.get("id") == draft_id_clean:
+                data["status"] = req.status
+                data["reviewer_comment"] = req.comment
+                json_file.write_text(json.dumps(data, default=custom_encoder), encoding="utf-8")
+                return {"success": True, "draft": data}
+        except Exception:
+            continue
+    raise HTTPException(status_code=404, detail="Draft not found")
+
 import enum
 
 def highlight_flagged_claims(html: str, report) -> str:
@@ -245,6 +296,146 @@ async def generate(req: GenerateRequest):
                     }
                     json_filename = output_filename.replace(".html", "") + ".json"
                     (out_dir / json_filename).write_text(json.dumps(meta, default=custom_encoder), encoding="utf-8")
+                
+            soft_review_notes_raw = final_state.get("soft_review_notes", []) or []
+            soft_notes_serializable = [
+                {"concern": n.concern, "detail": n.detail} if hasattr(n, "concern") else n
+                for n in soft_review_notes_raw
+            ]
+            yield f"data: {json.dumps({'done': True, 'html': html_raw, 'html_preview': html_preview, 'report': report, 'meta': meta, 'iteration_history': iteration_history, 'soft_review_notes': soft_notes_serializable}, default=custom_encoder)}\n\n"
+            
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+class ReviseRequest(BaseModel):
+    human_feedback: str
+
+@app.post("/api/drafts/{draft_id}/revise")
+async def revise_draft(draft_id: str, req: ReviseRequest):
+    draft_id_clean = draft_id.replace("%23", "#")
+    outputs_dir = Path("outputs")
+    
+    target_meta = None
+    target_json_path = None
+    for json_file in outputs_dir.glob("*.json"):
+        try:
+            data = json.loads(json_file.read_text(encoding="utf-8"))
+            if data.get("id") == draft_id_clean:
+                target_meta = data
+                target_json_path = json_file
+                break
+        except Exception:
+            continue
+            
+    if not target_meta:
+        raise HTTPException(status_code=404, detail="Draft not found")
+        
+    html_path = target_json_path.with_suffix(".html")
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="HTML for draft not found")
+        
+    existing_html = html_path.read_text(encoding="utf-8")
+    
+    async def event_stream():
+        t0 = time.time()
+        try:
+            client = LLMClient()
+            brief = CampaignBrief(
+                channel=Channel(target_meta.get("channel", "email")),
+                email_type=EmailType(target_meta.get("type")) if target_meta.get("type") else None,
+                market=target_meta.get("market", ""),
+                audience=target_meta.get("audience", ""),
+                brand=target_meta.get("brand", ""),
+                objective=target_meta.get("objective", ""),
+                classification=ContentClassification("unbranded")
+            )
+            if "branded" in html_path.name.lower() and "unbranded" not in html_path.name.lower():
+                brief.classification = ContentClassification("branded")
+            
+            graph = build_graph()
+            final_state = {}
+            prev_failed_ids = []
+            iteration_history = []
+            
+            for step in graph.stream({
+                "brief": brief,
+                "client": client,
+                "run_soft_review": True,
+                "iteration": 0,
+                "prev_failed_ids": None,
+                "html": existing_html,
+                "human_feedback": req.human_feedback
+            }):
+                node_name = list(step.keys())[0]
+                update = step[node_name]
+                final_state.update(update)
+                
+                delta_info = {}
+                if node_name == "grade" and "grade_report" in update:
+                    report = update["grade_report"]
+                    current_iteration = final_state.get("iteration", 0)
+                    warn_count = sum(1 for i in report.items if not i.passed and i.severity.value == "warning")
+                    passed_count = sum(1 for i in report.items if i.passed)
+                    
+                    failed_rules = [i.rule_id for i in report.items if not i.passed and i.severity.value == "blocking"]
+                    rectified = [r for r in prev_failed_ids if r not in failed_rules]
+                    still_failing = [r for r in failed_rules if r in prev_failed_ids]
+                    new_failures = [r for r in failed_rules if r not in prev_failed_ids]
+                    
+                    if prev_failed_ids:
+                        delta_info = {
+                            "rectified": rectified,
+                            "still_failing": still_failing,
+                            "new_failures": new_failures
+                        }
+                        
+                    iteration_history.append({
+                        "attempt": current_iteration,
+                        "passed": passed_count,
+                        "failed": len(failed_rules),
+                        "warned": warn_count,
+                        "rectified": rectified,
+                        "still_failing": still_failing,
+                        "new_failures": new_failures
+                    })
+                        
+                    prev_failed_ids = failed_rules
+                
+                payload = {
+                    'node': node_name, 
+                    'update': filter_update(update),
+                    'delta': delta_info
+                }
+                yield f"data: {json.dumps(payload, default=custom_encoder)}\n\n"
+                await asyncio.sleep(0.01)
+            
+            elapsed = time.time() - t0
+            html_raw = final_state.get("html", "")
+            report = final_state.get("grade_report")
+            
+            html_preview = html_raw
+            if report and not report.all_passed:
+                html_preview = highlight_flagged_claims(html_preview, report)
+            
+            meta = target_meta
+            if report:
+                passed_count = sum(1 for i in report.items if i.passed)
+                failed_count = sum(1 for i in report.items if not i.passed and i.severity.value == "blocking")
+                warn_count = sum(1 for i in report.items if not i.passed and i.severity.value == "warning")
+                
+                async with file_lock:
+                    html_path.write_text(html_raw, encoding="utf-8")
+                    
+                    meta["iterations"] = meta.get("iterations", 0) + final_state.get("iteration", 0)
+                    meta["passed"] = passed_count
+                    meta["failed"] = failed_count
+                    meta["warned"] = warn_count
+                    meta["all_passed"] = report.all_passed
+                    meta["last_revised"] = datetime.now().isoformat()
+                    
+                    target_json_path.write_text(json.dumps(meta, default=custom_encoder), encoding="utf-8")
                 
             soft_review_notes_raw = final_state.get("soft_review_notes", []) or []
             soft_notes_serializable = [

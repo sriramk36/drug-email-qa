@@ -40,14 +40,14 @@
                     <input type="text" id="audience" name="audience" value="HCP" required>
                 </label>
 
-                <label>Brand
+                <label id="brandLabelWrapper">Brand
                     <input type="text" id="brand" name="brand" value="Dovato" required>
                 </label>
 
                 <label>Classification
                     <select id="classification" name="classification">
+                        <option value="branded" selected>Branded</option>
                         <option value="unbranded">Unbranded Disease Awareness</option>
-                        <option value="branded">Branded</option>
                     </select>
                 </label>
 
@@ -131,8 +131,29 @@
                 <div id="code" class="tab-content">
                     <pre style="background:#f6f8fa; padding:1rem; border-radius:4px; overflow-x:auto;"><code id="rawCodeBlock"></code></pre>
                 </div>
+                
+                <div id="draftActions" style="display:none; padding-top: 1rem; border-top: 1px solid var(--border-color); margin-top: 1rem;">
+                    <div style="display:flex; flex-wrap:wrap; gap: 1rem; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; flex: 1; min-width: 250px; max-width: 600px; gap: 0.5rem; align-items: center;">
+                            <input type="text" id="humanFeedback" placeholder="Ask AI to modify this draft..." style="flex: 1; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; outline: none;">
+                            <button id="reviseBtn" class="btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem; border-radius: 4px; white-space: nowrap;">Revise</button>
+                        </div>
+                        <div id="reviewButtonsContainer" style="display:flex; gap: 0.5rem; align-items: center;">
+                            <span id="reviewStatusText" style="display: none; margin-right: 1rem; font-weight: 600;"></span>
+                            <button id="approveBtn" class="btn-primary" style="background-color: #10b981; border-color: #10b981; white-space: nowrap; padding: 0.5rem 1.5rem;">Approve</button>
+                            <button id="rejectBtn" class="btn-primary" style="background-color: #ef4444; border-color: #ef4444; white-space: nowrap; padding: 0.5rem 1.5rem;">Reject</button>
+                        </div>
+                    </div>
+                </div>
             </div>
             
+            <div class="card" id="analyticsCard" style="display: none; margin-bottom: 1.5rem;">
+                <h3>Pipeline Analytics</h3>
+                <div style="display: flex; gap: 1.5rem; flex-wrap: wrap; margin-top: 1rem;" id="analyticsContent">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
             <div class="card">
                 <h3>Recent Drafts</h3>
                 <div class="table-responsive">

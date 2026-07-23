@@ -69,6 +69,7 @@ class PipelineState(TypedDict, total=False):
     stuck: bool
 
     soft_review_notes: list[SoftReviewNote]
+    human_feedback: Optional[str]
 
 
 logger = get_logger(__name__)
@@ -87,10 +88,10 @@ def node_generate(state: PipelineState) -> dict:
     iteration = state.get("iteration", 0) + 1
     logger.info(f"Generating draft, iteration {iteration}")
     try:
-        if iteration == 1:
+        if iteration == 1 and not state.get("human_feedback"):
             html = gen_generate(brief, client, ctx)
         else:
-            html = gen_revise(brief, state["html"], state["grade_report"], client, ctx)
+            html = gen_revise(brief, state["html"], state.get("grade_report"), client, ctx, state.get("human_feedback"))
     except Exception as e:
         if not isinstance(e, PipelineError):
             raise GenerationError(f"Draft generation failed: {e}") from e
