@@ -43,8 +43,6 @@ from core.config import settings
 from core.logger import get_logger
 from core.exceptions import GenerationError
 import re
-import json
-import hashlib
 import openai
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
@@ -80,7 +78,7 @@ class LLMClient:
             self._client = AzureOpenAI(
                 api_key=api_key,
                 azure_endpoint=endpoint,
-                api_version="2024-10-21",
+                api_version=settings.azure_openai_api_version,
             )
         self._deployment = settings.azure_openai_deployment
         self._is_reasoning = _is_reasoning_model(self._deployment)
@@ -96,7 +94,7 @@ class LLMClient:
         )),
         reraise=True
     )
-    def complete(self, system: str, user: str, max_tokens: int = 4000, images: list[str] = None) -> str:
+    def complete(self, system: str, user: str, max_tokens: int = 4000, images: list[str] | None = None) -> str:
         if images and not self._is_reasoning:
             user_content = [{"type": "text", "text": user}]
             for b64 in images:
@@ -106,21 +104,19 @@ class LLMClient:
                 logger.warning(f"Images were provided but {self._deployment} is a reasoning model. Images will be ignored.")
             user_content = user
 
-        kwargs = dict(
-            model=self._deployment,
-            messages=[
+        kwargs: dict = {
+            "model": self._deployment,
+            "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
-            max_tokens=max_tokens if not self._is_reasoning else None,
-            temperature=0.0 if not self._is_reasoning else None,
-        )
+        }
         if self._is_reasoning:
-            # reasoning models reject temperature and max_tokens directly.
-            kwargs.pop("max_tokens", None)
-            kwargs.pop("temperature", None)
             kwargs["max_completion_tokens"] = max_tokens
             kwargs["reasoning_effort"] = "low"
+        else:
+            kwargs["max_tokens"] = max_tokens
+            kwargs["temperature"] = 0.0
 
         try:
             resp = self._client.chat.completions.create(**kwargs)
@@ -149,9 +145,6 @@ class LLMClient:
         if reasoning:
             usage_dict["reasoning_tokens"] = reasoning
         self.last_usage = usage_dict
-        self.last_model = self._deployment
-        self.last_prompt_hash = hashlib.sha256((system + user).encode("utf-8")).hexdigest()
-        self.last_input_hash = hashlib.sha256(user.encode("utf-8")).hexdigest()
         
         logger.info(f"LLM Call successful. Tokens: {usage_dict}")
         return content

@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import json
 import time
+import threading
 from pathlib import Path
 
 from core.utils import redact_text
 
 TRACE_FILE = Path(__file__).parent.parent / "traces.jsonl"
+_write_lock = threading.Lock()
 
 
 def _redact_brief(brief) -> dict:
@@ -40,8 +42,9 @@ def log_iteration(brief, grade_report, iteration: int, prompt_hash: str | None =
         "prompt_hash": prompt_hash,
         "input_hash": input_hash,
     }
-    with TRACE_FILE.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    with _write_lock:
+        with TRACE_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
 
 
 def log_resolution(brief, market_info, audience_info) -> None:
@@ -62,5 +65,6 @@ def log_resolution(brief, market_info, audience_info) -> None:
         "audience_source": audience_info.source,
         "audience_known": audience_info.known,
     }
-    with TRACE_FILE.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    with _write_lock:
+        with TRACE_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")

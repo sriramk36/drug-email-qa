@@ -419,9 +419,11 @@ ALL_RULES: list[RuleFunc] = [
 def grade(html: str, brief: CampaignBrief, ctx: GradingContext, iteration: int) -> GradeReport:
     soup = BeautifulSoup(html, "html.parser")
     
-    # Run rules in parallel to speed up execution (specifically the LLM judge)
+    # Run rules in parallel to speed up execution (specifically the LLM judge).
+    # Use submission-order collection (not as_completed) so GradeReport.items
+    # stays in the same deterministic order as ALL_RULES across every run.
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = [executor.submit(rule, soup, html, brief, ctx) for rule in ALL_RULES]
-        items = [future.result() for future in concurrent.futures.as_completed(futures)]
+        items = [future.result() for future in futures]
         
     return GradeReport(items=items, iteration=iteration)

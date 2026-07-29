@@ -9,6 +9,7 @@ __pycache__/
 
 # Environment variables (NEVER commit secrets)
 .env
+!.env.example
 
 # OS files
 .DS_Store
@@ -18,8 +19,14 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Test cache
+# Test & lint caches
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build artifacts
+dist/
+build/
 
 # Generated outputs (re-created on every run)
 outputs/
