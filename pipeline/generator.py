@@ -7,6 +7,7 @@ based on GradeReport feedback during revision cycles.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from core.schema import CampaignBrief, GradeReport
 from core.regulatory import market_addendum
@@ -66,7 +67,6 @@ def generate(brief: CampaignBrief, client: LLMClient, ctx: GradingContext) -> st
     return _extract_html(raw)
 
 
-from typing import Optional
 
 def revise(brief: CampaignBrief, previous_html: str, grade_report: Optional[GradeReport], client: LLMClient, ctx: GradingContext, human_feedback: Optional[str] = None) -> str:
     tokens = ctx.tokens

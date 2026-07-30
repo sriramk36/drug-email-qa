@@ -1,7 +1,7 @@
 """
 Soft review — the genuinely agentic half of Loop 2.
 
-grader.py's 11 rules check objective, checkable facts (a border exists,
+grader.py's structural rules check objective, checkable facts (a border exists,
 a string is present). None of them are judgment calls, so none of them
 should cost an LLM call. But a real MLR review also asks questions no
 regex can answer: does this copy *imply* an efficacy claim without

@@ -288,15 +288,12 @@ grader bug.
   by design (see `prompts/generator_system.md`, rule 7); wiring in
   real approved assets is a deliberate separate step, not something to
   automate away.
-- **Loop 3** (event trigger) — straightforward FastAPI wrapper around
-  `run_pipeline()` if/when you want brief submission to kick off a run
-  asynchronously instead of blocking the Streamlit request.
 - **`resolution_cache.json` is a flat, unbounded file** — fine for a
   prototype's traffic volume; a real deployment would want an actual
   TTL/eviction policy so a genuinely wrong LLM resolution (rare, but
   possible) doesn't stay cached forever with no way to invalidate it.
-- **Two orchestration files to keep in sync** — `pipeline.py` and
-  `pipeline_langgraph.py` share every underlying function but
-  duplicate the stuck-detector and revision-loop *control flow*
-  logic. If you only end up needing one of them long-term, delete the
-  other rather than let them drift apart silently.
+- **Two orchestration files remain** — `pipeline.py` (plain Python)
+  and `pipeline_langgraph.py` (LangGraph). The LangGraph version is
+  the one used by both `app.py` and `api.py`. `pipeline.py` is kept
+  as a simpler reference implementation; if you never use it, delete
+  it rather than let them drift apart silently.

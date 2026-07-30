@@ -142,10 +142,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    fetchHistory();
 
 
-            
     let currentDraftId = null;
 
     async function handlePipelineStream(response) {

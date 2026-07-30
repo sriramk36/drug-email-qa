@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -61,6 +62,7 @@ HCP_KEYWORDS = ("hcp", "healthcare professional", "doctor", "physician", "clinic
 NON_HCP_KEYWORDS = ("patient", "consumer", "general public", "caregiver", "general audience")
 
 _CACHE_PATH = Path(__file__).parent / "resolution_cache.json"
+_cache_lock = threading.Lock()
 
 
 class MarketInfo(BaseModel):
@@ -95,7 +97,8 @@ def _save_cache(cache: dict) -> None:
     # Same reasoning — if this can't write (permissions, disk full, whatever),
     # you want to know, not have every run silently pay for LLM calls it
     # thinks it's caching but actually isn't.
-    _CACHE_PATH.write_text(json.dumps(cache, indent=2))
+    with _cache_lock:
+        _CACHE_PATH.write_text(json.dumps(cache, indent=2))
 
 
 def _parse_json_response(raw: str) -> dict:
