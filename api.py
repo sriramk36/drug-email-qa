@@ -119,6 +119,7 @@ async def stream_pipeline(brief: CampaignBrief, run_soft_review: bool,
                           existing_json_path: Path | None = None,
                           existing_html_path: Path | None = None):
     """Shared SSE streaming logic for both generate and revise endpoints."""
+    logger.info(f"Starting pipeline stream for brand '{brief.brand}' (Market: {brief.market}, Audience: {brief.audience})")
     t0 = time.time()
     try:
         client = LLMClient()
@@ -220,6 +221,7 @@ async def stream_pipeline(brief: CampaignBrief, run_soft_review: bool,
                     meta["all_passed"] = report.all_passed
                     meta["last_revised"] = datetime.now().isoformat()
                     existing_json_path.write_text(json.dumps(meta, default=custom_encoder), encoding="utf-8")
+                    logger.info(f"Revised draft {meta.get('id')} for {brief.brand} in {elapsed:.1f}s (Total iterations: {meta['iterations']})")
                 else:
                     # Generate path: create new files
                     existing = list(out_dir.glob("*.json"))
@@ -250,6 +252,7 @@ async def stream_pipeline(brief: CampaignBrief, run_soft_review: bool,
                     }
                     json_filename = output_filename.replace(".html", "") + ".json"
                     (out_dir / json_filename).write_text(json.dumps(meta, default=custom_encoder), encoding="utf-8")
+                    logger.info(f"Generated draft {draft_id} for {brief.brand} in {elapsed:.1f}s (Iterations: {final_state.get('iteration', 0)})")
 
         soft_review_notes_raw = final_state.get("soft_review_notes", []) or []
         soft_notes_serializable = [
@@ -324,6 +327,7 @@ async def review_draft(draft_id: str, req: ReviewRequest):
 
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
+    logger.info(f"Received /api/generate request for {req.brand} in {req.market}")
     brief = CampaignBrief(
         channel=Channel(req.channel),
         email_type=EmailType(req.email_type) if req.email_type else None,
@@ -342,6 +346,7 @@ async def generate(req: GenerateRequest):
 
 @app.post("/api/drafts/{draft_id}/revise")
 async def revise_draft(draft_id: str, req: ReviseRequest):
+    logger.info(f"Received /api/drafts/{draft_id}/revise request")
     draft_id_clean = draft_id.replace("%23", "#")
     outputs_dir = Path("outputs")
 
