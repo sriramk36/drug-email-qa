@@ -404,6 +404,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         console.error("JSON parse error on chunk", err, dataStr);
                     }
                 }
+                eventBoundary = buffer.indexOf("\n\n");
             }
         }
     }
