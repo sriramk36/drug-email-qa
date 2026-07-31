@@ -9,8 +9,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 from pydantic import BaseModel
 
+from core.brand_config import BRAND_TOKENS
 from core.schema import CampaignBrief, Channel, EmailType, ContentClassification, Severity, ImageMap
 from core.llm_client import LLMClient
 from core.config import settings
@@ -20,7 +22,17 @@ from ui.dashboard import highlight_flagged_claims
 
 logger = get_logger(__name__)
 
-app = FastAPI(title="MLR Pipeline API", version="0.2.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("==================================================")
+    logger.info(f"🚀 Starting MLR Pipeline API v0.2.0")
+    logger.info(f"Loaded brand tokens for: {', '.join(BRAND_TOKENS.keys())}")
+    logger.info("Application startup complete. Waiting for requests...")
+    logger.info("==================================================")
+    yield
+    logger.info("Shutting down API...")
+
+app = FastAPI(title="MLR Pipeline API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -124,7 +136,7 @@ async def stream_pipeline(brief: CampaignBrief, run_soft_review: bool,
     try:
         client = LLMClient()
     except Exception as e:
-        yield f"data: {json.dumps({'error': f'LLM client init failed: {e}'})}\\n\\n"
+        yield f"data: {json.dumps({'error': f'LLM client init failed: {e}'})}\n\n"
         return
 
     try:
@@ -186,7 +198,7 @@ async def stream_pipeline(brief: CampaignBrief, run_soft_review: bool,
                 "update": filter_update(update),
                 "delta": delta_info,
             }
-            yield f"data: {json.dumps(payload, default=custom_encoder)}\\n\\n"
+            yield f"data: {json.dumps(payload, default=custom_encoder)}\n\n"
             await asyncio.sleep(0.01)
 
         elapsed = time.time() - t0
@@ -259,11 +271,11 @@ async def stream_pipeline(brief: CampaignBrief, run_soft_review: bool,
             {"concern": n.concern, "detail": n.detail} if hasattr(n, "concern") else n
             for n in soft_review_notes_raw
         ]
-        yield f"data: {json.dumps({'done': True, 'html': html_raw, 'html_preview': html_preview, 'report': report, 'meta': meta, 'iteration_history': iteration_history, 'soft_review_notes': soft_notes_serializable}, default=custom_encoder)}\\n\\n"
+        yield f"data: {json.dumps({'done': True, 'html': html_raw, 'html_preview': html_preview, 'report': report, 'meta': meta, 'iteration_history': iteration_history, 'soft_review_notes': soft_notes_serializable}, default=custom_encoder)}\n\n"
 
     except Exception as e:
         logger.error(f"Pipeline streaming error: {e}")
-        yield f"data: {json.dumps({'error': str(e)})}\\n\\n"
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 
 # --- Endpoints ---

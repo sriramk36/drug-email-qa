@@ -149,17 +149,21 @@ document.addEventListener("DOMContentLoaded", () => {
     async function handlePipelineStream(response) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = "";
         
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
+            buffer += decoder.decode(value, { stream: true });
             
-            for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                    const dataStr = line.replace("data: ", "").trim();
+            let eventBoundary = buffer.indexOf("\n\n");
+            while (eventBoundary !== -1) {
+                const eventChunk = buffer.slice(0, eventBoundary).trim();
+                buffer = buffer.slice(eventBoundary + 2);
+                
+                if (eventChunk.startsWith("data: ")) {
+                    const dataStr = eventChunk.substring(6).trim();
                     if (!dataStr) continue;
                     
                     try {

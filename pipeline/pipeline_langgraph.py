@@ -80,6 +80,10 @@ def node_resolve(state: PipelineState) -> dict:
     audience_info = resolve_audience(brief.audience, client=client)
     log_resolution(brief, market_info, audience_info)
     ctx = GradingContext(tokens=get_brand_tokens(brief.brand), market_info=market_info, audience_info=audience_info, client=client)
+    
+    logger.info(f"[Resolve] Market '{brief.market}' -> {market_info.body_name} (Source: {market_info.source})")
+    logger.info(f"[Resolve] Audience '{brief.audience}' -> HCP={audience_info.is_hcp} (Source: {audience_info.source})")
+    
     return {"market_info": market_info, "audience_info": audience_info, "ctx": ctx}
 
 
@@ -96,6 +100,8 @@ def node_generate(state: PipelineState) -> dict:
         if not isinstance(e, PipelineError):
             raise GenerationError(f"Draft generation failed: {e}") from e
         raise
+    
+    logger.info(f"[Generate] Draft generated successfully ({len(html)} bytes)")
     return {"html": html, "iteration": iteration}
 
 
@@ -108,13 +114,30 @@ def node_grade(state: PipelineState) -> dict:
     old_prev = state.get("prev_failed_ids")
     stuck = old_prev is not None and current_failed_ids == old_prev  # same stuck-detector as pipeline.py
 
+    passed_count = sum(1 for i in report.items if i.passed)
+    logger.info(f"[Grade] Iteration {iteration}: {passed_count}/{len(report.items)} rules passed")
+    for item in report.failed_items:
+        status_label = "WARN" if item.severity.value == "warning" else "FAILED"
+        logger.info(f"  [{status_label}] {item.label} — {item.detail}")
+
+    if stuck:
+        logger.warning(f"[Grade] Pipeline is stuck! Failed rules are identical to the previous iteration: {current_failed_ids}")
+
     return {"grade_report": report, "prev_failed_ids": current_failed_ids, "stuck": stuck}
 
 
 def node_soft_review(state: PipelineState) -> dict:
     if not state.get("run_soft_review", True) or not state["grade_report"].all_passed:
+        logger.info("[Soft Review] Skipped (either disabled or blocking rules failed)")
         return {"soft_review_notes": []}
+    
+    logger.info("[Soft Review] Running subjective LLM advisory review...")
     notes = gen_soft_review(state["html"], state["brief"], state["client"])
+    
+    logger.info(f"[Soft Review] Generated {len(notes)} advisory notes")
+    for n in notes:
+        logger.info(f"  - {n.concern}: {n.detail}")
+        
     return {"soft_review_notes": notes}
 
 
